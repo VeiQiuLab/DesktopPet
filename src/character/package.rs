@@ -59,6 +59,8 @@ pub struct BehaviorMeta {
     pub double_click_ms: u64,
     #[serde(default = "default_drag_threshold")]
     pub drag_threshold_px: i32,
+    #[serde(default)]
+    pub idle: IdleBehavior,
 }
 
 impl Default for BehaviorMeta {
@@ -66,8 +68,64 @@ impl Default for BehaviorMeta {
         BehaviorMeta {
             double_click_ms: default_double_click_ms(),
             drag_threshold_px: default_drag_threshold(),
+            idle: IdleBehavior::default(),
         }
     }
+}
+
+/// 空闲随机行为参数（秒 / 概率）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdleBehavior {
+    /// Blink 间隔下限（秒）。
+    #[serde(default = "default_blink_min")]
+    pub blink_interval_min: f32,
+    /// Blink 间隔上限（秒）。
+    #[serde(default = "default_blink_max")]
+    pub blink_interval_max: f32,
+    /// 每次空闲 tick 触发 Nod 的概率。
+    #[serde(default = "default_nod_prob")]
+    pub nod_probability: f32,
+    /// 每次空闲 tick 触发 Shake 的概率。
+    #[serde(default = "default_shake_prob")]
+    pub shake_probability: f32,
+    /// 动作结束后冷却（秒），冷却期内不触发随机动作。
+    #[serde(default = "default_action_cooldown")]
+    pub action_cooldown: f32,
+    /// 两次随机动作之间的最小间隔（秒）。
+    #[serde(default = "default_min_interval")]
+    pub min_interval: f32,
+}
+
+impl Default for IdleBehavior {
+    fn default() -> Self {
+        IdleBehavior {
+            blink_interval_min: default_blink_min(),
+            blink_interval_max: default_blink_max(),
+            nod_probability: default_nod_prob(),
+            shake_probability: default_shake_prob(),
+            action_cooldown: default_action_cooldown(),
+            min_interval: default_min_interval(),
+        }
+    }
+}
+
+fn default_blink_min() -> f32 {
+    3.0
+}
+fn default_blink_max() -> f32 {
+    7.0
+}
+fn default_nod_prob() -> f32 {
+    0.15
+}
+fn default_shake_prob() -> f32 {
+    0.03
+}
+fn default_action_cooldown() -> f32 {
+    2.0
+}
+fn default_min_interval() -> f32 {
+    2.0
 }
 
 fn default_scale() -> f32 {
@@ -165,5 +223,9 @@ impl CharacterPackage {
 
     pub fn offset(&self) -> (f32, f32) {
         (self.meta.model.offset_x, self.meta.model.offset_y)
+    }
+
+    pub fn idle_behavior(&self) -> &IdleBehavior {
+        &self.meta.behavior.idle
     }
 }

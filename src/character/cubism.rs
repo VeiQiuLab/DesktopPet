@@ -38,6 +38,7 @@ extern "C" {
         h: c_float,
     ) -> c_int;
     fn cubism_shim_model_set_look(handle: *mut c_void, x: c_float, y: c_float);
+    fn cubism_shim_model_is_busy(handle: *mut c_void) -> c_int;
 }
 
 /// 原始句柄直接命中测试（供窗口 wndproc 使用，避免借用 CubismModel）。
@@ -112,6 +113,11 @@ impl CubismModel {
     /// 设置视线目标（-1..1 归一化；x 右为正，y 上为正）。
     pub fn set_look(&self, x: f32, y: f32) {
         unsafe { cubism_shim_model_set_look(self.handle, x, y) }
+    }
+
+    /// 是否有非 Idle 动作正在播放（priority > 1）。
+    pub fn is_busy(&self) -> bool {
+        unsafe { cubism_shim_model_is_busy(self.handle) != 0 }
     }
 
     /// 播放动作。返回 true 表示成功。优先级：1=Idle, 2=Normal, 3=Force。

@@ -14,13 +14,15 @@
 *.log
 run*.log
 pet_runtime.log
+cli_out.txt
 
-# 用户本地配置（可运行生成，不入库）
+# 用户本地配置
 desktop-pet.config.json
-target/**/desktop-pet.config.json
 
 # 临时启动脚本
 _launch_*.bat
+_l.bat
+_cli.bat
 
 # 截图（调试用）
 screenshot*.png

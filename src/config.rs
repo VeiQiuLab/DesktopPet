@@ -1,5 +1,5 @@
-//! 配置读写：窗口位置、激活角色。
-//! 目标：运行时不再依赖任何绝对路径。
+//! 配置读写：窗口位置、激活角色、可见性、开机启动。
+//! 向后兼容：字段缺失时使用默认值。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -12,6 +12,12 @@ pub struct Config {
     pub window: WindowConfig,
     #[serde(default)]
     pub character: CharacterConfig,
+    /// 是否随 Windows 启动（HKCU Run）。
+    #[serde(default)]
+    pub auto_start: bool,
+    /// 上次退出时窗口是否可见。用于下次启动恢复（默认 true）。
+    #[serde(default = "default_visible")]
+    pub visible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,14 +30,15 @@ pub struct WindowConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterConfig {
-    /// 当前激活的角色 id（对应 characters/<id>/）。
-    /// 空字符串表示使用第一个可用角色。
     #[serde(default = "default_active")]
     pub active_character: String,
 }
 
 fn default_active() -> String {
     "default".to_string()
+}
+fn default_visible() -> bool {
+    true
 }
 
 impl Default for CharacterConfig {
@@ -52,12 +59,13 @@ impl Default for Config {
                 height: 640,
             },
             character: CharacterConfig::default(),
+            auto_start: false,
+            visible: true,
         }
     }
 }
 
 impl Config {
-    /// 配置文件路径：exe 同目录下 desktop-pet.config.json
     pub fn path() -> PathBuf {
         let mut p = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
         p.pop();
@@ -65,8 +73,6 @@ impl Config {
         p
     }
 
-    /// 读取配置；不存在或解析失败则返回默认值（不 panic）。
-    /// 首次运行（文件不存在）时写出默认配置。
     pub fn load() -> Self {
         let path = Self::path();
         let mut cfg = match std::fs::read_to_string(&path) {
@@ -92,7 +98,6 @@ impl Config {
         cfg
     }
 
-    /// 保存配置；失败仅记录日志，不影响程序运行。
     pub fn save(&self) {
         let path = Self::path();
         match serde_json::to_string_pretty(self) {
@@ -105,8 +110,6 @@ impl Config {
         }
     }
 
-    /// 将窗口位置修正到可见区域内（当保存位置落在虚拟屏幕外时）。
-    /// 保留至少 MARGIN 像素可见。
     fn clamp_to_screen(&mut self) {
         const MARGIN: i32 = 100;
         unsafe {
@@ -137,15 +140,72 @@ impl Config {
     }
 }
 
-/// 简单日志：同时输出 stderr 与独立文件，便于诊断。
+/// 日志级别：Release 下只记录错误和关键信息，Debug 记录全部。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Error,
+}
+
+/// 当前日志级别（编译期决定：Debug 构建记录全部，Release 只记录 Info/Error）。
+#[inline]
+pub fn log_enabled(level: LogLevel) -> bool {
+    if cfg!(debug_assertions) {
+        true
+    } else {
+        !matches!(level, LogLevel::Debug)
+    }
+}
+
+/// 简单日志：同时输出 stderr 与独立文件。
+/// 每次进程启动时截断日志文件，避免长期常驻导致日志无限增长。
 pub fn log_line(msg: &str) {
-    eprintln!("[desktop-pet] {msg}");
+    log_at(LogLevel::Info, msg);
+}
+
+/// Debug 级别日志（Release 下不输出）。
+#[allow(dead_code)]
+pub fn log_debug(msg: &str) {
+    log_at(LogLevel::Debug, msg);
+}
+
+/// Error 级别日志（总是输出）。
+pub fn log_error(msg: &str) {
+    log_at(LogLevel::Error, msg);
+}
+
+fn log_at(level: LogLevel, msg: &str) {
+    if !log_enabled(level) {
+        return;
+    }
+    let tag = match level {
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Error => "error",
+    };
+    eprintln!("[desktop-pet/{tag}] {msg}");
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("pet_runtime.log")
+        .open(log_file_path())
     {
-        let _ = writeln!(f, "[desktop-pet] {msg}");
+        let _ = writeln!(f, "[desktop-pet/{tag}] {msg}");
     }
+}
+
+/// 日志文件路径（exe 同目录 pet_runtime.log）。
+fn log_file_path() -> PathBuf {
+    let mut p = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    p.pop();
+    p.push("pet_runtime.log");
+    p
+}
+
+/// 启动时截断日志文件（避免无限增长）。
+pub fn reset_log_file() {
+    let p = log_file_path();
+    let _ = std::fs::write(&p, "");
 }

@@ -1,35 +1,37 @@
-//! Win32 透明置顶窗口 + 消息处理 + 鼠标拖拽 + 事件采集。
+//! Win32 透明置顶窗口 + 消息处理 + 命中测试 + 拖拽 + 右键菜单 + 托盘回调。
 //!
-//! 关键实现：
-//! - WS_EX_NOREDIRECTIONBITMAP：配合 DirectComposition 合成。
-//! - WM_NCHITTEST：命中模型返回 HTCLIENT，透明区域返回 HTTRANSPARENT（穿透）。
-//! - 拖拽仅可在命中模型时启动；拖拽开始/结束通过 channel 上报事件。
-//! - WM_RBUTTONUP：命中模型时弹出原生菜单，菜单选择通过 channel 上报。
-//! - 本层不决定行为，仅采集输入事件（PetEvent）。
+//! - WS_EX_NOREDIRECTIONBITMAP + DirectComposition 合成
+//! - WM_NCHITTEST 命中测试（模型区域 HTCLIENT，透明区域 HTTRANSPARENT）
+//! - 拖拽仅命中模型时启动
+//! - WM_RBUTTONUP / 托盘右键弹出菜单，菜单选择经 channel 上报
+//! - 本层只采集输入 / 处理窗口级命令，不直接调用 Cubism motion
 
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ScreenToClient, UpdateWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::autostart;
 use crate::behavior::PetEvent;
 use crate::character::cubism;
 use crate::config::{log_line, Config};
+use crate::platform::tray::{
+    show_tray_menu, TrayIcon, CMD_CHAR_BASE, CMD_TRAY_AUTOSTART, CMD_TRAY_EXIT, CMD_TRAY_RESET,
+    CMD_TRAY_TOGGLE_VISIBLE, TRAY_CALLBACK_MSG,
+};
 
-/// 菜单命令 ID。
+/// 右键菜单命令 ID。
 const CMD_NOD: usize = 1;
 const CMD_SHAKE: usize = 2;
 const CMD_RESET: usize = 3;
 const CMD_QUIT: usize = 4;
 
-/// 拖拽位移阈值（像素）：超过该值视为拖拽。
 const DRAG_THRESHOLD: i32 = 5;
-/// 双击判定窗口（毫秒）。
 const DOUBLE_CLICK_MS: u128 = 400;
 
 pub struct WindowParams {
@@ -40,7 +42,6 @@ pub struct WindowParams {
 }
 
 pub struct WindowState {
-    #[allow(dead_code)]
     pub hwnd: HWND,
     pub dragging: bool,
     pub drag_moved: bool,
@@ -52,12 +53,21 @@ pub struct WindowState {
     pub last_click: Option<Instant>,
     pub hovering: bool,
     pub config: Config,
+    /// 持有托盘图标；Drop 时自动移除。字段本身不直接读取。
+    #[allow(dead_code)]
+    pub tray: Option<TrayIcon>,
+    pub characters: Vec<(String, String)>,
+    pub active_character: String,
+    pub auto_start: bool,
+    pub menu_open: bool,
 }
 
 pub unsafe fn create_window(
     params: &WindowParams,
     config: Config,
     events: Sender<PetEvent>,
+    characters: Vec<(String, String)>,
+    active_character: String,
 ) -> windows::core::Result<HWND> {
     let instance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)?;
 
@@ -92,6 +102,9 @@ pub unsafe fn create_window(
         None,
     )?;
 
+    let tray = TrayIcon::new(hwnd);
+    let auto_start = autostart::is_enabled();
+
     let state = Box::new(WindowState {
         hwnd,
         dragging: false,
@@ -104,6 +117,11 @@ pub unsafe fn create_window(
         last_click: None,
         hovering: false,
         config,
+        tray,
+        characters,
+        active_character,
+        auto_start,
+        menu_open: false,
     });
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
@@ -113,10 +131,6 @@ pub unsafe fn create_window(
     Ok(hwnd)
 }
 
-/// 将已加载的模型句柄挂到窗口，用于命中测试。
-///
-/// # Safety
-/// hwnd 必须由 create_window 创建；handle 必须由 CubismModel::load 返回且存活。
 pub unsafe fn set_model(hwnd: HWND, handle: *mut c_void) {
     let st = state_ptr(hwnd);
     if !st.is_null() {
@@ -124,11 +138,33 @@ pub unsafe fn set_model(hwnd: HWND, handle: *mut c_void) {
     }
 }
 
+pub unsafe fn set_active_character(hwnd: HWND, id: &str) {
+    let st = state_ptr(hwnd);
+    if !st.is_null() {
+        (*st).active_character = id.to_string();
+    }
+}
+
+pub unsafe fn is_menu_open(hwnd: HWND) -> bool {
+    let st = state_ptr(hwnd);
+    if st.is_null() {
+        return false;
+    }
+    (*st).menu_open
+}
+
+pub unsafe fn is_dragging(hwnd: HWND) -> bool {
+    let st = state_ptr(hwnd);
+    if st.is_null() {
+        return false;
+    }
+    (*st).dragging
+}
+
 unsafe fn state_ptr(hwnd: HWND) -> *mut WindowState {
     GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState
 }
 
-/// 判断给定屏幕坐标是否命中模型。
 unsafe fn hit_model_at_screen(st: *mut WindowState, screen_x: i32, screen_y: i32) -> bool {
     if st.is_null() || (*st).model_handle.is_null() {
         return false;
@@ -149,23 +185,26 @@ unsafe fn hit_model_at_screen(st: *mut WindowState, screen_x: i32, screen_y: i32
     )
 }
 
-/// 弹出右键菜单并返回选择的命令 ID（0 = 取消）。
-unsafe fn show_context_menu(hwnd: HWND) -> usize {
-    let menu = CreatePopupMenu().unwrap_or_default();
-    if menu.0.is_null() {
-        return 0;
-    }
-    let _ = AppendMenuW(menu, MF_STRING, CMD_NOD, w!("点头"));
-    let _ = AppendMenuW(menu, MF_STRING, CMD_SHAKE, w!("摇头"));
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, w!(""));
-    let _ = AppendMenuW(menu, MF_STRING, CMD_RESET, w!("重置位置"));
-    let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("退出"));
+/// 追加字符串菜单项（辅助）。
+unsafe fn append(menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str) {
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let _ = AppendMenuW(menu, flags, id, PCWSTR(wide.as_ptr()));
+}
 
-    // 获取鼠标位置作为菜单显示点
+/// 桌宠本体右键菜单。
+unsafe fn show_context_menu(hwnd: HWND) -> usize {
+    let menu = match CreatePopupMenu() {
+        Ok(m) => m,
+        Err(_) => return 0,
+    };
+    append(menu, MF_STRING, CMD_NOD, "点头");
+    append(menu, MF_STRING, CMD_SHAKE, "摇头");
+    append(menu, MF_SEPARATOR, 0, "");
+    append(menu, MF_STRING, CMD_RESET, "重置位置");
+    append(menu, MF_STRING, CMD_QUIT, "退出");
+
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-
-    // TPM_RETURNCMD(0x100) | TPM_RIGHTBUTTON(0x2)
     let cmd = TrackPopupMenu(
         menu,
         TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -288,10 +327,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if !st.is_null() {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
-                // 只有命中角色才弹菜单
                 if hit_model_at_screen(st, pt.x, pt.y) {
                     let _ = (*st).events.send(PetEvent::RightClick);
+                    (*st).menu_open = true;
                     let cmd = show_context_menu(hwnd);
+                    (*st).menu_open = false;
                     let ev = match cmd {
                         CMD_NOD => Some(PetEvent::MenuNod),
                         CMD_SHAKE => Some(PetEvent::MenuShake),
@@ -306,9 +346,67 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             LRESULT(0)
         }
+        TRAY_CALLBACK_MSG => {
+            // 托盘鼠标事件在 lparam
+            let ev = lparam.0 as u32;
+            let st = state_ptr(hwnd);
+            if st.is_null() {
+                return LRESULT(0);
+            }
+            match ev {
+                WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+                    // 左键单击切换可见性
+                    toggle_visibility(hwnd);
+                }
+                WM_RBUTTONUP => {
+                    let characters = (*st).characters.clone();
+                    let active = (*st).active_character.clone();
+                    let auto_start = (*st).auto_start;
+                    (*st).menu_open = true;
+                    let cmd = show_tray_menu(hwnd, &characters, &active, auto_start);
+                    (*st).menu_open = false;
+                    match cmd {
+                        CMD_TRAY_TOGGLE_VISIBLE => toggle_visibility(hwnd),
+                        CMD_TRAY_RESET => {
+                            let _ = (*st).events.send(PetEvent::MenuReset);
+                        }
+                        CMD_TRAY_AUTOSTART => {
+                            let now = autostart::toggle();
+                            (*st).auto_start = now;
+                            log_line(&format!("auto start toggled: {now}"));
+                        }
+                        CMD_TRAY_EXIT => {
+                            let _ = (*st).events.send(PetEvent::MenuQuit);
+                        }
+                        c if c >= CMD_CHAR_BASE => {
+                            let idx = c - CMD_CHAR_BASE;
+                            if let Some((id, _)) = characters.get(idx) {
+                                let _ =
+                                    (*st).events.send(PetEvent::TraySwitchCharacter(id.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            LRESULT(0)
+        }
         WM_KEYDOWN => {
             if wparam.0 == 0x1B {
-                let _ = DestroyWindow(hwnd);
+                // ESC → 统一退出
+                let st = state_ptr(hwnd);
+                if !st.is_null() {
+                    let _ = (*st).events.send(PetEvent::MenuQuit);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            // 统一退出：发事件，由主循环销毁窗口
+            let st = state_ptr(hwnd);
+            if !st.is_null() {
+                let _ = (*st).events.send(PetEvent::MenuQuit);
             }
             LRESULT(0)
         }
@@ -320,6 +418,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 (*st).config.window.x = rect.left;
                 (*st).config.window.y = rect.top;
                 (*st).config.save();
+                // 回收 Box（TrayIcon 在 Drop 时移除图标）
                 drop(Box::from_raw(st));
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             }
@@ -328,4 +427,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// 切换窗口可见性。
+unsafe fn toggle_visibility(hwnd: HWND) {
+    let visible = IsWindowVisible(hwnd).as_bool();
+    let cmd = if visible { SW_HIDE } else { SW_SHOW };
+    let _ = ShowWindow(hwnd, cmd);
+    crate::config::log_debug(&format!("visibility toggled: visible={}", !visible));
 }

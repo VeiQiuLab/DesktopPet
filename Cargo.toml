@@ -18,6 +18,10 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_UI_Shell",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

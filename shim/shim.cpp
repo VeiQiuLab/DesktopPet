@@ -171,6 +171,11 @@ public:
         return true;
     }
 
+    /// 是否有非 Idle 动作正在播放（priority > 1）。
+    bool IsBusy() const {
+        return _motionManager && _motionManager->GetCurrentPriority() > 1;
+    }
+
     /// 设置视线目标（-1..1 归一化，窗口坐标系；x 右为正，y 上为正）。
     void SetLook(float x, float y) {
         _lookTargetX = x < -1.0f ? -1.0f : (x > 1.0f ? 1.0f : x);
@@ -470,6 +475,11 @@ void* cubism_shim_model_load(const char* model3Path, int width, int height,
 void cubism_shim_model_set_look(void* handle, float x, float y) {
     if (!handle) return;
     static_cast<ModelWrapper*>(handle)->SetLook(x, y);
+}
+
+int cubism_shim_model_is_busy(void* handle) {
+    if (!handle) return 0;
+    return static_cast<ModelWrapper*>(handle)->IsBusy() ? 1 : 0;
 }
 
 void cubism_shim_model_free(void* handle) {

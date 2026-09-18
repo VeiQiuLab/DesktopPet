@@ -5,8 +5,6 @@
 //! - 本模块将 PetEvent 转换为 PetAction（+ 优先级）；
 //! - character 层将语义动作映射到具体 motion group；
 //! - Cubism shim 执行实际播放。
-//!
-//! 第一阶段保持极简：不做复杂状态机，仅做事件→动作的映射与最小调度。
 
 /// 由窗口层采集的语义事件。
 #[derive(Debug, Clone, Copy)]
@@ -18,9 +16,17 @@ pub enum PetEvent {
     DragStart,
     DragEnd,
     RightClick,
+    /// 右键菜单选择「点头」。
+    MenuNod,
+    /// 右键菜单选择「摇头」。
+    MenuShake,
+    /// 右键菜单选择「重置位置」。
+    MenuReset,
+    /// 右键菜单选择「退出」。
+    MenuQuit,
 }
 
-/// 语义动作（与底层 motion group 解耦，允许未来换角色重新映射）。
+/// 语义动作（与底层 motion group 解耦，允许换角色重新映射）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum PetAction {
@@ -28,6 +34,10 @@ pub enum PetAction {
     Blink,
     Nod,
     Shake,
+    /// 将桌宠移回默认位置。
+    ResetPosition,
+    /// 退出应用。
+    Quit,
 }
 
 impl PetAction {
@@ -38,6 +48,8 @@ impl PetAction {
             PetAction::Blink => "Blink",
             PetAction::Nod => "Nod",
             PetAction::Shake => "Shake",
+            PetAction::ResetPosition => "ResetPosition",
+            PetAction::Quit => "Quit",
         }
     }
 }
@@ -47,7 +59,7 @@ impl PetAction {
 /// 规则：
 /// - 同一时刻只保留一个 pending 动作；
 /// - 高优先级动作可覆盖低优先级；
-/// - take_pending 之后清空（由主循环消费并交给 Cubism）。
+/// - take_pending 之后清空（由主循环消费）。
 pub struct BehaviorController {
     pending: Option<(PetAction, i32)>,
 }
@@ -62,7 +74,12 @@ impl BehaviorController {
         match ev {
             PetEvent::LeftClick => self.schedule(PetAction::Nod, 2),
             PetEvent::DoubleClick => self.schedule(PetAction::Shake, 3),
-            // 拖拽期间不触发其它动作；进入/离开目前不产生动作。
+            PetEvent::MenuNod => self.schedule(PetAction::Nod, 2),
+            PetEvent::MenuShake => self.schedule(PetAction::Shake, 3),
+            // 控制类动作使用最高优先级，确保不被动作抢占覆盖
+            PetEvent::MenuReset => self.schedule(PetAction::ResetPosition, 10),
+            PetEvent::MenuQuit => self.schedule(PetAction::Quit, 10),
+            // 拖拽/悬停目前不产生动作
             _ => {}
         }
     }

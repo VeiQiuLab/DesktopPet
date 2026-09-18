@@ -1,9 +1,10 @@
 //! Win32 透明置顶窗口 + 消息处理 + 鼠标拖拽 + 事件采集。
 //!
 //! 关键实现：
-//! - WS_EX_NOREDIRECTIONBITMAP：窗口不占用 GDI 重定向缓冲，配合 DirectComposition 合成。
-//! - WM_NCHITTEST：通过 Cubism 几何命中判断，模型区域返回 HTCLIENT，透明区域返回 HTTRANSPARENT（穿透）。
+//! - WS_EX_NOREDIRECTIONBITMAP：配合 DirectComposition 合成。
+//! - WM_NCHITTEST：命中模型返回 HTCLIENT，透明区域返回 HTTRANSPARENT（穿透）。
 //! - 拖拽仅可在命中模型时启动；拖拽开始/结束通过 channel 上报事件。
+//! - WM_RBUTTONUP：命中模型时弹出原生菜单，菜单选择通过 channel 上报。
 //! - 本层不决定行为，仅采集输入事件（PetEvent）。
 
 use std::ffi::c_void;
@@ -20,12 +21,17 @@ use crate::behavior::PetEvent;
 use crate::character::cubism;
 use crate::config::{log_line, Config};
 
-/// 拖拽位移阈值（像素）：超过该值视为拖拽，否则视为点击。
+/// 菜单命令 ID。
+const CMD_NOD: usize = 1;
+const CMD_SHAKE: usize = 2;
+const CMD_RESET: usize = 3;
+const CMD_QUIT: usize = 4;
+
+/// 拖拽位移阈值（像素）：超过该值视为拖拽。
 const DRAG_THRESHOLD: i32 = 5;
 /// 双击判定窗口（毫秒）。
 const DOUBLE_CLICK_MS: u128 = 400;
 
-/// 窗口创建参数（来自配置）。
 pub struct WindowParams {
     pub x: i32,
     pub y: i32,
@@ -33,7 +39,6 @@ pub struct WindowParams {
     pub height: i32,
 }
 
-/// 运行态窗口状态。
 pub struct WindowState {
     #[allow(dead_code)]
     pub hwnd: HWND,
@@ -41,20 +46,14 @@ pub struct WindowState {
     pub drag_moved: bool,
     pub drag_origin: POINT,
     pub window_origin: POINT,
-    /// 模型句柄（app 加载模型后由 set_model 挂上）。
     pub model_handle: *mut c_void,
-    /// 窗口客户区尺寸（像素），用于命中测试。
     pub client_size: (i32, i32),
-    /// 事件发送端（主循环在另一端接收）。
     pub events: Sender<PetEvent>,
-    /// 上一次点击时间，用于双击判定。
     pub last_click: Option<Instant>,
-    /// 鼠标当前是否悬停在角色上。
     pub hovering: bool,
     pub config: Config,
 }
 
-/// 注册窗口类并创建窗口。
 pub unsafe fn create_window(
     params: &WindowParams,
     config: Config,
@@ -129,7 +128,7 @@ unsafe fn state_ptr(hwnd: HWND) -> *mut WindowState {
     GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState
 }
 
-/// 判断给定屏幕坐标是否命中模型（使用 C++ shim 的几何命中）。
+/// 判断给定屏幕坐标是否命中模型。
 unsafe fn hit_model_at_screen(st: *mut WindowState, screen_x: i32, screen_y: i32) -> bool {
     if st.is_null() || (*st).model_handle.is_null() {
         return false;
@@ -148,6 +147,36 @@ unsafe fn hit_model_at_screen(st: *mut WindowState, screen_x: i32, screen_y: i32
         w as f32,
         h as f32,
     )
+}
+
+/// 弹出右键菜单并返回选择的命令 ID（0 = 取消）。
+unsafe fn show_context_menu(hwnd: HWND) -> usize {
+    let menu = CreatePopupMenu().unwrap_or_default();
+    if menu.0.is_null() {
+        return 0;
+    }
+    let _ = AppendMenuW(menu, MF_STRING, CMD_NOD, w!("点头"));
+    let _ = AppendMenuW(menu, MF_STRING, CMD_SHAKE, w!("摇头"));
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, w!(""));
+    let _ = AppendMenuW(menu, MF_STRING, CMD_RESET, w!("重置位置"));
+    let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("退出"));
+
+    // 获取鼠标位置作为菜单显示点
+    let mut pt = POINT::default();
+    let _ = GetCursorPos(&mut pt);
+
+    // TPM_RETURNCMD(0x100) | TPM_RIGHTBUTTON(0x2)
+    let cmd = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        pt.x,
+        pt.y,
+        Some(0),
+        hwnd,
+        None,
+    );
+    let _ = DestroyMenu(menu);
+    cmd.0 as usize
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -257,7 +286,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_RBUTTONUP => {
             let st = state_ptr(hwnd);
             if !st.is_null() {
-                let _ = (*st).events.send(PetEvent::RightClick);
+                let mut pt = POINT::default();
+                let _ = GetCursorPos(&mut pt);
+                // 只有命中角色才弹菜单
+                if hit_model_at_screen(st, pt.x, pt.y) {
+                    let _ = (*st).events.send(PetEvent::RightClick);
+                    let cmd = show_context_menu(hwnd);
+                    let ev = match cmd {
+                        CMD_NOD => Some(PetEvent::MenuNod),
+                        CMD_SHAKE => Some(PetEvent::MenuShake),
+                        CMD_RESET => Some(PetEvent::MenuReset),
+                        CMD_QUIT => Some(PetEvent::MenuQuit),
+                        _ => None,
+                    };
+                    if let Some(e) = ev {
+                        let _ = (*st).events.send(e);
+                    }
+                }
             }
             LRESULT(0)
         }

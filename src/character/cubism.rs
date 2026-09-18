@@ -9,13 +9,6 @@ use std::os::raw::{c_char, c_float, c_int, c_void};
 use crate::config::log_line;
 
 extern "C" {
-    fn cubism_shim_model_hit_test(
-        handle: *mut c_void,
-        x: c_float,
-        y: c_float,
-        w: c_float,
-        h: c_float,
-    ) -> c_int;
     fn cubism_shim_version() -> c_int;
     fn cubism_shim_startup() -> c_int;
     fn cubism_shim_shutdown();
@@ -24,6 +17,9 @@ extern "C" {
         model3_path: *const c_char,
         width: c_int,
         height: c_int,
+        scale: c_float,
+        offset_x: c_float,
+        offset_y: c_float,
     ) -> *mut c_void;
     fn cubism_shim_model_free(handle: *mut c_void);
     fn cubism_shim_model_update(handle: *mut c_void, dt: c_float);
@@ -34,6 +30,14 @@ extern "C" {
         no: c_int,
         priority: c_int,
     ) -> c_int;
+    fn cubism_shim_model_hit_test(
+        handle: *mut c_void,
+        x: c_float,
+        y: c_float,
+        w: c_float,
+        h: c_float,
+    ) -> c_int;
+    fn cubism_shim_model_set_look(handle: *mut c_void, x: c_float, y: c_float);
 }
 
 /// 原始句柄直接命中测试（供窗口 wndproc 使用，避免借用 CubismModel）。
@@ -72,9 +76,17 @@ impl CubismModel {
     }
 
     /// 加载模型。返回 None 表示失败。
-    pub fn load(model3_path: &str, width: i32, height: i32) -> Option<Self> {
+    pub fn load(
+        model3_path: &str,
+        width: i32,
+        height: i32,
+        scale: f32,
+        offset: (f32, f32),
+    ) -> Option<Self> {
         let path = CString::new(model3_path).ok()?;
-        let handle = unsafe { cubism_shim_model_load(path.as_ptr(), width, height) };
+        let handle = unsafe {
+            cubism_shim_model_load(path.as_ptr(), width, height, scale, offset.0, offset.1)
+        };
         if handle.is_null() {
             log_line(&format!("failed to load model: {model3_path}"));
             None
@@ -95,6 +107,11 @@ impl CubismModel {
     /// 原始句柄（供窗口层 wndproc 做命中测试，不介入生命周期管理）。
     pub fn raw_handle(&self) -> *mut c_void {
         self.handle
+    }
+
+    /// 设置视线目标（-1..1 归一化；x 右为正，y 上为正）。
+    pub fn set_look(&self, x: f32, y: f32) {
+        unsafe { cubism_shim_model_set_look(self.handle, x, y) }
     }
 
     /// 播放动作。返回 true 表示成功。优先级：1=Idle, 2=Normal, 3=Force。

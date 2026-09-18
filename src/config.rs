@@ -1,5 +1,5 @@
-//! 配置读写：窗口位置、角色选择等持久化。
-//! 目标：未来可扩展为 characters/<name>/ 角色包配置。
+//! 配置读写：窗口位置、激活角色。
+//! 目标：运行时不再依赖任何绝对路径。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -10,6 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub window: WindowConfig,
+    #[serde(default)]
     pub character: CharacterConfig,
 }
 
@@ -23,10 +24,22 @@ pub struct WindowConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterConfig {
-    /// 模型资产目录（含 .model3.json）
-    pub asset_dir: String,
-    /// 模型名（目录内 <name>.model3.json）
-    pub model_name: String,
+    /// 当前激活的角色 id（对应 characters/<id>/）。
+    /// 空字符串表示使用第一个可用角色。
+    #[serde(default = "default_active")]
+    pub active_character: String,
+}
+
+fn default_active() -> String {
+    "default".to_string()
+}
+
+impl Default for CharacterConfig {
+    fn default() -> Self {
+        CharacterConfig {
+            active_character: default_active(),
+        }
+    }
 }
 
 impl Default for Config {
@@ -38,18 +51,14 @@ impl Default for Config {
                 width: 640,
                 height: 640,
             },
-            character: CharacterConfig {
-                // 默认引用现有资产目录（只读引用，不复制、不修改）
-                asset_dir: r"C:\AI\QwenGame\test-psd2live".to_string(),
-                model_name: "test".to_string(),
-            },
+            character: CharacterConfig::default(),
         }
     }
 }
 
 impl Config {
     /// 配置文件路径：exe 同目录下 desktop-pet.config.json
-    fn path() -> PathBuf {
+    pub fn path() -> PathBuf {
         let mut p = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
         p.pop();
         p.push("desktop-pet.config.json");
@@ -57,7 +66,7 @@ impl Config {
     }
 
     /// 读取配置；不存在或解析失败则返回默认值（不 panic）。
-    /// 首次运行（文件不存在）时写出默认配置，便于用户查看和编辑。
+    /// 首次运行（文件不存在）时写出默认配置。
     pub fn load() -> Self {
         let path = Self::path();
         let mut cfg = match std::fs::read_to_string(&path) {
@@ -83,8 +92,21 @@ impl Config {
         cfg
     }
 
+    /// 保存配置；失败仅记录日志，不影响程序运行。
+    pub fn save(&self) {
+        let path = Self::path();
+        match serde_json::to_string_pretty(self) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(&path, text) {
+                    log_line(&format!("config save failed: {e}"));
+                }
+            }
+            Err(e) => log_line(&format!("config serialize failed: {e}")),
+        }
+    }
+
     /// 将窗口位置修正到可见区域内（当保存位置落在虚拟屏幕外时）。
-    /// 保留至少 MARGIN 像素可见，避免用户彻底看不见桌宠。
+    /// 保留至少 MARGIN 像素可见。
     fn clamp_to_screen(&mut self) {
         const MARGIN: i32 = 100;
         unsafe {
@@ -113,23 +135,9 @@ impl Config {
             }
         }
     }
-
-    /// 保存配置；失败仅记录日志，不影响程序运行。
-    pub fn save(&self) {
-        let path = Self::path();
-        match serde_json::to_string_pretty(self) {
-            Ok(text) => {
-                if let Err(e) = std::fs::write(&path, text) {
-                    log_line(&format!("config save failed: {e}"));
-                }
-            }
-            Err(e) => log_line(&format!("config serialize failed: {e}")),
-        }
-    }
 }
 
-/// 简单日志：同时输出 stderr 与独立文件，便于诊断（C++ shim 亦写 stderr，
-/// 直接共享 stderr 会与 C++ fprintf 交错丢行）。
+/// 简单日志：同时输出 stderr 与独立文件，便于诊断。
 pub fn log_line(msg: &str) {
     eprintln!("[desktop-pet] {msg}");
     use std::io::Write;

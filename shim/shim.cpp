@@ -2,6 +2,7 @@
 // 职责：加载 model3/moc3/纹理/动作，驱动每帧更新与 D3D11 绘制。
 // 不含任何 Win32 窗口逻辑（窗口由 Rust 侧管理）。
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -105,7 +106,8 @@ public:
     ModelWrapper() = default;
     ~ModelWrapper() override { Release(); }
 
-    bool Load(const std::string& model3Path, int width, int height) {
+    bool Load(const std::string& model3Path, int width, int height,
+              float scale, float offsetX, float offsetY) {
         _dir = DirectoryOf(model3Path);
         fprintf(stderr, "[shim]   dir=%s\n", _dir.c_str()); fflush(stderr);
 
@@ -155,8 +157,25 @@ public:
         }
         fprintf(stderr, "[shim]   physics ok\n"); fflush(stderr);
 
+
+        // 应用角色包提供的 scale / offset 到模型矩阵
+        if (_modelMatrix) {
+            if (scale > 0.0f && scale != 1.0f) {
+                _modelMatrix->ScaleRelative(scale, scale);
+            }
+            if (offsetX != 0.0f || offsetY != 0.0f) {
+                _modelMatrix->TranslateRelative(offsetX, offsetY);
+            }
+        }
         _model->SaveParameters();
         return true;
+    }
+
+    /// 设置视线目标（-1..1 归一化，窗口坐标系；x 右为正，y 上为正）。
+    void SetLook(float x, float y) {
+        _lookTargetX = x < -1.0f ? -1.0f : (x > 1.0f ? 1.0f : x);
+        _lookTargetY = y < -1.0f ? -1.0f : (y > 1.0f ? 1.0f : y);
+        _lookActive = true;
     }
 
     void Update(float dt) {
@@ -167,6 +186,11 @@ public:
             StartMotion("Idle", 0, 1);
         } else {
             _motionManager->UpdateMotion(_model, dt);
+        }
+
+        // 视线跟随：仅在 Idle（priority <= 1）时写入，避免干扰 Nod/Shake。
+        if (_lookActive && _motionManager->GetCurrentPriority() <= 1) {
+            UpdateLook(dt);
         }
 
         if (_physics) {
@@ -332,6 +356,30 @@ private:
         _modelJson = nullptr;
     }
 
+    void UpdateLook(float dt) {
+        // 指数平滑（与帧率无关）
+        const float rate = 10.0f;
+        float a = 1.0f - std::exp(-rate * dt);
+        if (a < 0.0f) a = 0.0f;
+        if (a > 1.0f) a = 1.0f;
+        _lookCurrentX += (_lookTargetX - _lookCurrentX) * a;
+        _lookCurrentY += (_lookTargetY - _lookCurrentY) * a;
+
+        Csm::CubismIdManager* idm = Csm::CubismFramework::GetIdManager();
+        if (!idm) return;
+
+        Csm::CubismIdHandle idAngleX = idm->GetId("ParamAngleX");
+        Csm::CubismIdHandle idAngleY = idm->GetId("ParamAngleY");
+        Csm::CubismIdHandle idEyeX   = idm->GetId("ParamEyeBallX");
+        Csm::CubismIdHandle idEyeY   = idm->GetId("ParamEyeBallY");
+
+        // 标准范围：角度 [-30,30]，眼球 [-1,1]；不存在的参数为 no-op
+        _model->SetParameterValue(idAngleX, _lookCurrentX * 30.0f, 1.0f);
+        _model->SetParameterValue(idAngleY, _lookCurrentY * 30.0f, 1.0f);
+        _model->SetParameterValue(idEyeX,   _lookCurrentX, 1.0f);
+        _model->SetParameterValue(idEyeY,   _lookCurrentY, 1.0f);
+    }
+
     static bool PointInTriangle(float px, float py,
                                 float ax, float ay, float bx, float by, float cx, float cy) {
         const float v0x = cx - ax, v0y = cy - ay;
@@ -355,6 +403,13 @@ private:
     Csm::csmMap<Csm::csmString, Csm::ACubismMotion*> _motions;
     std::vector<ID3D11ShaderResourceView*> _textureViews;
     Csm::CubismMatrix44 _mvp;
+
+    // 视线跟随状态
+    bool _lookActive = false;
+    float _lookTargetX = 0.0f;
+    float _lookTargetY = 0.0f;
+    float _lookCurrentX = 0.0f;
+    float _lookCurrentY = 0.0f;
 };
 
 } // namespace
@@ -396,17 +451,25 @@ void cubism_shim_set_device(void* device, void* context) {
     }
 }
 
-void* cubism_shim_model_load(const char* model3Path, int width, int height) {
-    fprintf(stderr, "[shim] model_load: %s (%dx%d) dev=%p\n", model3Path ? model3Path : "(null)", width, height, (void*)g_device); fflush(stderr);
+void* cubism_shim_model_load(const char* model3Path, int width, int height,
+                             float scale, float offsetX, float offsetY) {
+    fprintf(stderr, "[shim] model_load: %s (%dx%d) scale=%.3f off=(%.3f,%.3f) dev=%p\n",
+            model3Path ? model3Path : "(null)", width, height, scale, offsetX, offsetY, (void*)g_device);
+    fflush(stderr);
     if (!model3Path || !g_device) return nullptr;
     auto* model = new ModelWrapper();
-    if (!model->Load(model3Path, width, height)) {
+    if (!model->Load(model3Path, width, height, scale, offsetX, offsetY)) {
         fprintf(stderr, "[shim] model_load FAILED\n"); fflush(stderr);
         delete model;
         return nullptr;
     }
     fprintf(stderr, "[shim] model_load OK\n"); fflush(stderr);
     return model;
+}
+
+void cubism_shim_model_set_look(void* handle, float x, float y) {
+    if (!handle) return;
+    static_cast<ModelWrapper*>(handle)->SetLook(x, y);
 }
 
 void cubism_shim_model_free(void* handle) {

@@ -64,8 +64,40 @@ fn main() {
     // 部署 shader 到输出目录（Framework 通过相对路径 FrameworkShaders/ 加载）
     deploy_shaders(&manifest);
 
+    // 部署 characters/ 到输出目录（连同 exe 一起可移动）
+    deploy_characters(&manifest);
+
     println!("cargo:rerun-if-changed=shim/shim.cpp");
     println!("cargo:rerun-if-changed=shim/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=characters");
+}
+
+fn deploy_characters(manifest: &PathBuf) {
+    let src = manifest.join("characters");
+    if !src.is_dir() {
+        return;
+    }
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let profile_dir = out_dir.ancestors().nth(3).unwrap().to_path_buf();
+    let dest = profile_dir.join("characters");
+    let _ = std::fs::create_dir_all(&dest);
+    copy_dir_recursive(&src, &dest);
+}
+
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
+    if let Ok(entries) = std::fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().unwrap();
+            let target = dst.join(name);
+            if path.is_dir() {
+                let _ = std::fs::create_dir_all(&target);
+                copy_dir_recursive(&path, &target);
+            } else {
+                let _ = std::fs::copy(&path, &target);
+            }
+        }
+    }
 }
 
 fn deploy_shaders(manifest: &PathBuf) {

@@ -1,0 +1,26 @@
+# Rust 构建产物
+/target/
+
+# C++ shim 构建目录
+/shim/build/
+
+# Cubism SDK（大型 vendored 依赖）
+/vendor/
+
+# 调试符号
+*.pdb
+
+# 运行日志
+*.log
+run*.log
+pet_runtime.log
+
+# 用户本地配置（可运行生成，不入库）
+desktop-pet.config.json
+target/**/desktop-pet.config.json
+
+# 临时启动脚本
+_launch_*.bat
+
+# 截图（调试用）
+screenshot*.png

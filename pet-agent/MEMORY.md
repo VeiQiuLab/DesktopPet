@@ -59,6 +59,7 @@ pet-agent memory accept <id>
 pet-agent memory reject <id>
 pet-agent memory delete <id>
 pet-agent memory export
+pet-agent memory import <file.json>
 pet-agent memory backup
 pet-agent memory audit
 ```

@@ -35,6 +35,7 @@ const CMD_OPEN: usize = 1;
 const CMD_CLEAR: usize = 2;
 const CMD_AUTOSTART: usize = 3;
 const CMD_EXIT: usize = 4;
+const CMD_MEMORY_PENDING: usize = 5;
 
 thread_local! {
     static CTX: RefCell<Option<UiContext>> = RefCell::new(None);
@@ -676,6 +677,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     }
 }
 
+/// 字符串 → nul 结尾 UTF-16。
+fn wide_str(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 unsafe fn show_tray_menu(hwnd: HWND) -> usize {
     let menu = match CreatePopupMenu() {
         Ok(m) => m,
@@ -683,6 +689,31 @@ unsafe fn show_tray_menu(hwnd: HWND) -> usize {
     };
     let _ = AppendMenuW(menu, MF_STRING, CMD_OPEN, w!("打开输入框"));
     let _ = AppendMenuW(menu, MF_STRING, CMD_CLEAR, w!("清空对话"));
+    // 记忆 / Persona（只读展示；管理走 CLI）
+    let (pending_n, persona_name, mem_ok) = CTX.with(|c| {
+        let b = c.borrow();
+        let ctx = b.as_ref().unwrap();
+        let pn = ctx
+            .memory
+            .as_ref()
+            .map(|m| m.list_pending().len())
+            .unwrap_or(0);
+        (pn, ctx.persona.name.clone(), ctx.memory.is_some())
+    });
+    if mem_ok {
+        let label = wide_str(&format!("待确认记忆 ({pending_n})"));
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING | MF_GRAYED,
+            CMD_MEMORY_PENDING,
+            PCWSTR(label.as_ptr()),
+        );
+    } else {
+        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, w!("记忆不可用"));
+    }
+    let plabel = wide_str(&format!("Persona: {persona_name}"));
+    let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(plabel.as_ptr()));
+    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, w!(""));
     let as_flags = if autostart::is_enabled() {
         MF_STRING | MF_CHECKED
     } else {

@@ -366,6 +366,36 @@ impl MemoryManager {
         self.list_active().into_iter().next()
     }
 
+    /// 导入：校验 schema，生成 pending（不覆盖现有数据）。
+    /// 返回 (导入条数, 错误)。
+    pub fn import_json(&self, json: &str) -> Result<usize, String> {
+        #[derive(serde::Deserialize)]
+        struct Row {
+            #[serde(default)]
+            kind: String,
+            content: String,
+            #[serde(default)]
+            #[allow(dead_code)]
+            source: String,
+        }
+        let rows: Vec<Row> =
+            serde_json::from_str(json).map_err(|e| format!("invalid json schema: {e}"))?;
+        let mut n = 0;
+        for r in rows {
+            if r.content.trim().is_empty() {
+                continue;
+            }
+            let kind = if r.kind.trim().is_empty() {
+                "custom"
+            } else {
+                &r.kind
+            };
+            self.propose("create", kind, &r.content, None, "import")?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
     /// 导出全部（active + deleted）为 JSON。
     pub fn export_json(&self) -> String {
         let all = self.query(

@@ -207,6 +207,22 @@ fn run_memory_cli(args: &[String]) {
             }
         }
         "export" => println!("{}", mgr.export_json()),
+        "import" => {
+            let file = args.get(3).cloned().unwrap_or_default();
+            if file.is_empty() {
+                println!("usage: pet-agent memory import <file.json>");
+            } else {
+                match std::fs::read_to_string(&file) {
+                    Ok(text) => match mgr.import_json(&text) {
+                        Ok(n) => println!(
+                            "imported {n} item(s) as pending (review with 'memory pending')"
+                        ),
+                        Err(e) => println!("error: {e}"),
+                    },
+                    Err(e) => println!("read failed: {e}"),
+                }
+            }
+        }
         "backup" => match mgr.backup(&db) {
             Ok(p) => println!("backup: {}", p.display()),
             Err(e) => println!("error: {e}"),

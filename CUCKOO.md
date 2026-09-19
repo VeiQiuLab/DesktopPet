@@ -357,4 +357,118 @@ enum Priority { Idle = 0, System = 1, User = 2 }
 - 气泡内容不被 `CopyFromScreen` 捕获（DWM layered 层），验证靠像素回读。
 - 气泡不支持富文本 / 按钮 / 图标。
 - Idle speech 池较小（default 仅 4 句）。
-- `App::submit_expression` 尚未接线到任何外部输入源（预留给未来 AI）。
+
+---
+
+## 15. 外部控制入口 / Local IPC（第六阶段）
+
+### 15.1 架构
+
+```
+External Process (CLI / 未来 AI)
+      ↓ Named Pipe
+ipc worker thread（接收 / 解码 / 校验 / 入队）
+      ↓ bounded channel (capacity 32)
+App main loop → process_ipc
+      ↓
+App::submit → PresentationController → Bubble / Behavior → Scheduler → Cubism
+```
+
+**线程边界**：worker 只做接收/解码/校验/入队；HWND / Presentation / Cubism /
+Behavior 全在主线程。绝不从 IPC 线程操作 Win32 / Cubism。
+
+### 15.2 Named Pipe
+
+- 名称：`\\.\pipe\DesktopPetExpression_v1`（版本化）。
+- `PIPE_ACCESS_DUPLEX | PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT`。
+- 单实例 server，循环 `CreateNamedPipeW → ConnectNamedPipe → handle_connection → DisconnectNamedPipe`。
+- 本机、当前用户进程可访问；不监听网络、不开端口。
+
+### 15.3 Expression Protocol v1
+
+```json
+{ "version": 1, "type": "expression", "text": "你好。", "motion": "Nod",
+  "priority": "normal", "duration_ms": 4000, "id": "optional" }
+```
+
+- `text`：可选字符串，≤1000 Unicode 字符。
+- `motion`：可选，白名单 Idle / Blink / Nod / Shake。**禁止**文件路径 / group 名 / 参数 ID。
+- `priority`：可选，枚举 low / normal / high（**禁止**任意整数）。
+- `duration_ms`：可选，clamp 到 [500, 30000]。
+- 三种形态（纯 Text / 纯 Motion / Text+Motion）都转换为既有 `PetExpression`。
+
+### 15.4 Command Protocol
+
+```json
+{ "version": 1, "type": "command", "command": "hide" }
+```
+
+允许：`show` / `hide` / `reset_position` / `dismiss_bubble` / `character`（值必须为已扫描角色 id）。
+**禁止**：任意路径加载模型 / 删除文件 / 执行 shell / 启动程序 / 写注册表。
+
+### 15.5 Response
+
+成功 `{"ok":true,"accepted":true}`；失败 `{"ok":false,"error":"..."}`。
+内部错误（panic / Win32 栈）不外泄。
+
+### 15.6 输入限制
+
+| 项 | 限制 |
+|---|---|
+| 单条消息 | ≤ 16 KB，超出拒绝 |
+| 文本 | ≤ 1000 字符，超出拒绝 |
+| 动作 | 白名单 |
+| 优先级 | 枚举 |
+| version | 仅 1（或 0=不校验） |
+| JSON 非法 | 返回错误，不 panic |
+
+### 15.7 Backpressure
+
+- IPC → App 使用**有界 channel**（capacity 32）。
+- 队列满 → 返回 `queue_full`，不阻塞主循环，不无限增长。
+- 每帧最多处理 8 条，避免影响 60 FPS。
+
+### 15.8 CLI Client
+
+同一 exe 提供 client subcommand（**不获取主实例 mutex**）：
+
+```
+desktop-pet.exe send "你好。"
+desktop-pet.exe send "嗯？" --motion Nod
+desktop-pet.exe motion Shake
+desktop-pet.exe hide | show | dismiss | reset
+desktop-pet.exe character <id>
+```
+
+结果写 `cli_out.txt` 并尝试附加父控制台。
+
+### 15.9 Shutdown
+
+- `IpcServer::drop` 设置 `stop` flag，并主动发一条内部 `__stop` 连接唤醒阻塞的 `ConnectNamedPipe`，然后 `join` worker。
+- 实测退出：`ipc worker exited` → `main loop exited`，进程完全结束，无 hang。
+
+### 15.10 Security boundary
+
+- Named Pipe 默认 ACL（本机、创建者用户可访问）。**未**自定义 security descriptor。
+- 不监听网络；无远程接口；无管理员权限需求。
+- 技术债：未将 ACL 显式限制到当前用户 SID（见 §16）。
+
+### 15.11 Presentation 接线
+
+IPC 收到 Expression → `process_ipc` → `PresentationController::present(PetExpression)` → 返回 `PetAction` → `apply_motion`。
+**没有**在 app 里另建一套气泡控制逻辑；托盘「测试气泡」同样走 `PetExpression`。
+
+### 15.12 未来 AI 应如何调用
+
+1. 连接到 `\\.\pipe\DesktopPetExpression_v1`。
+2. 发送一条 JSON（`type=expression`），`text` + 可选 `motion` / `priority` / `duration_ms`。
+3. 读取响应；`ok=false` 时按 `error` 处理（`queue_full` 可重试）。
+4. 不要尝试传文件路径 / 参数 ID / 任意动作；只使用语义动作与文本。
+
+### 15.13 已知技术债（第六阶段）
+
+- Named Pipe ACL 未显式限制到当前用户 SID。
+- 无认证 / 无请求签名（本机同用户场景，风险低）。
+- 无 streaming / 增量气泡（按完整表达处理）。
+- CLI 参数解析较简单（未用 clap）。
+- `source` 字段协议中预留但内部未使用。

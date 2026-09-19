@@ -15,6 +15,8 @@ use crate::behavior::{BehaviorController, PetAction, PetEvent, TickContext};
 use crate::character::cubism::CubismModel;
 use crate::character::{CharacterManager, CharacterPackage};
 use crate::config::{log_line, Config};
+use crate::ipc::protocol::{ValidatedCommand, ValidatedRequest};
+use crate::ipc::server::IpcServer;
 use crate::platform::gfx::Gfx;
 use crate::platform::window::{
     create_window, is_dragging, is_menu_open, set_active_character, set_model, WindowParams,
@@ -99,6 +101,10 @@ impl App {
                 p.greet();
             }
 
+            // 启动 IPC server（Named Pipe）
+            let (ipc_server, ipc_rx) = IpcServer::start();
+            log_line("ipc server started");
+
             let mut last = Instant::now();
             let mut msg = MSG::default();
             let mut quit = false;
@@ -126,6 +132,23 @@ impl App {
                     &mut model,
                     &mut behavior,
                     &mut presentation,
+                    win_w,
+                    win_h,
+                    &mut quit,
+                );
+                if quit {
+                    break 'running;
+                }
+
+                // 处理 IPC 请求
+                self.process_ipc(
+                    hwnd,
+                    &gfx,
+                    &manager,
+                    &mut model,
+                    &mut behavior,
+                    &mut presentation,
+                    &ipc_rx,
                     win_w,
                     win_h,
                     &mut quit,
@@ -193,6 +216,9 @@ impl App {
                 }
             }
 
+            // 停止 IPC（Drop 会 join worker）
+            drop(ipc_server);
+
             // 统一退出流程：销毁窗口 → 触发 WM_DESTROY（保存配置、移除托盘）
             let _ = DestroyWindow(hwnd);
 
@@ -247,9 +273,11 @@ impl App {
         };
 
         let mut switch_to: Option<String> = None;
+        let mut test_bubble = false;
         for ev in events {
             match ev {
                 PetEvent::TraySwitchCharacter(id) => switch_to = Some(id),
+                PetEvent::MenuTestBubble => test_bubble = true,
                 PetEvent::LeftClick => {
                     if let Some(p) = presentation.as_mut() {
                         p.on_click();
@@ -295,6 +323,108 @@ impl App {
                 &new_id,
                 &mut self.config,
             );
+        }
+
+        // 托盘「测试气泡」：走 PetExpression → Presentation（不直接创建气泡）
+        if test_bubble {
+            if let Some(p) = presentation.as_mut() {
+                if let Some(action) = p.present(PetExpression::TextAndMotion {
+                    text: "桌宠运行正常。".to_string(),
+                    action: crate::behavior::PetAction::Nod,
+                    priority: crate::presentation::Priority::System,
+                    duration: None,
+                }) {
+                    if let Some(m) = model.as_ref() {
+                        let active_id = self.config.character.active_character.clone();
+                        Self::apply_motion(m, action, manager, &active_id);
+                    }
+                }
+            }
+        }
+        let _ = quit;
+    }
+
+    /// 处理 IPC 请求（worker 线程校验后经有界 channel 送达）。
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn process_ipc(
+        &mut self,
+        hwnd: HWND,
+        gfx: &Gfx,
+        manager: &CharacterManager,
+        model: &mut Option<CubismModel>,
+        behavior: &mut Option<BehaviorController>,
+        presentation: &mut Option<PresentationController>,
+        ipc_rx: &Receiver<ValidatedRequest>,
+        win_w: i32,
+        win_h: i32,
+        quit: &mut bool,
+    ) {
+        const MAX_PER_FRAME: usize = 8;
+        for _ in 0..MAX_PER_FRAME {
+            let req = match ipc_rx.try_recv() {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+            match req {
+                ValidatedRequest::Expression(e) => {
+                    let priority = e.priority.to_presentation();
+                    let duration_s = e.duration_ms.map(|ms| ms as f32 / 1000.0);
+                    let expr = match (e.text, e.motion) {
+                        (Some(text), Some(m)) => PetExpression::TextAndMotion {
+                            text,
+                            action: m.to_action(),
+                            priority,
+                            duration: duration_s,
+                        },
+                        (Some(text), None) => PetExpression::Text {
+                            text,
+                            priority,
+                            duration: duration_s,
+                        },
+                        (None, Some(m)) => PetExpression::Motion {
+                            action: m.to_action(),
+                            priority,
+                        },
+                        (None, None) => continue,
+                    };
+                    if let Some(p) = presentation.as_mut() {
+                        if let Some(action) = p.present(expr) {
+                            if let Some(m) = model.as_ref() {
+                                let active_id = self.config.character.active_character.clone();
+                                Self::apply_motion(m, action, manager, &active_id);
+                            }
+                        }
+                    }
+                }
+                ValidatedRequest::Command { command, .. } => match command {
+                    ValidatedCommand::Show => {
+                        crate::platform::window::show_window(hwnd);
+                    }
+                    ValidatedCommand::Hide => {
+                        crate::platform::window::hide_window(hwnd);
+                    }
+                    ValidatedCommand::ResetPosition => Self::reset_position(),
+                    ValidatedCommand::DismissBubble => {
+                        if let Some(p) = presentation.as_mut() {
+                            p.hide();
+                        }
+                    }
+                    ValidatedCommand::Character(id) => {
+                        Self::switch_character(
+                            hwnd,
+                            gfx,
+                            manager,
+                            model,
+                            behavior,
+                            presentation,
+                            win_w,
+                            win_h,
+                            &id,
+                            &mut self.config,
+                        );
+                    }
+                },
+            }
         }
         let _ = quit;
     }

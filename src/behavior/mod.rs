@@ -27,6 +27,8 @@ pub enum PetEvent {
     MenuShake,
     MenuReset,
     MenuQuit,
+    /// 托盘：测试气泡（由 app 处理，不经 Behavior）。
+    MenuTestBubble,
     /// 托盘：切换到指定角色 id（由 app 处理，不经 Behavior）。
     TraySwitchCharacter(String),
 }

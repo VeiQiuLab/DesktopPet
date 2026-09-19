@@ -6,6 +6,7 @@ mod autostart;
 mod behavior;
 mod character;
 mod config;
+mod ipc;
 mod platform;
 mod presentation;
 mod single_instance;
@@ -14,9 +15,8 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 
-/// 轻量 CLI 测试钩子（不影响正常 GUI 运行）。
-fn run_cli_if_requested() -> bool {
-    let args: Vec<String> = std::env::args().collect();
+/// 轻量 CLI 测试钩子（autostart，独立于 IPC client）。
+fn run_autostart_cli(args: &[String]) -> bool {
     if args.len() < 2 {
         return false;
     }
@@ -42,11 +42,19 @@ fn run_cli_if_requested() -> bool {
 }
 
 fn main() {
-    if run_cli_if_requested() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // 1) IPC client 模式（不获取 mutex，不创建第二个桌宠）
+    if let Some(code) = ipc::client::run_cli(&args) {
+        std::process::exit(code);
+    }
+
+    // 2) autostart 测试钩子
+    if run_autostart_cli(&args) {
         return;
     }
 
-    // Per-Monitor DPI Awareness V2（在创建任何窗口前设置）。
+    // 3) 正常 GUI 模式
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }

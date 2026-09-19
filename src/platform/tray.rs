@@ -19,6 +19,7 @@ pub const CMD_TRAY_TOGGLE_VISIBLE: usize = 100;
 pub const CMD_TRAY_RESET: usize = 101;
 pub const CMD_TRAY_AUTOSTART: usize = 102;
 pub const CMD_TRAY_EXIT: usize = 103;
+pub const CMD_TRAY_TEST_BUBBLE: usize = 104;
 pub const CMD_CHAR_BASE: usize = 200;
 
 /// 系统托盘图标。Drop 时自动移除。
@@ -100,6 +101,7 @@ pub unsafe fn show_tray_menu(
     append(menu, MF_POPUP, char_menu.0 as usize, "角色");
 
     append(menu, MF_SEPARATOR, 0, "");
+    append(menu, MF_STRING, CMD_TRAY_TEST_BUBBLE, "测试气泡");
     append(menu, MF_STRING, CMD_TRAY_RESET, "重置位置");
     let mut as_flags = MF_STRING;
     if auto_start {

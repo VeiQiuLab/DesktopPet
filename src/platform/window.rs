@@ -25,7 +25,7 @@ use crate::character::cubism;
 use crate::config::{log_line, Config};
 use crate::platform::tray::{
     show_tray_menu, TrayIcon, CMD_CHAR_BASE, CMD_TRAY_AUTOSTART, CMD_TRAY_EXIT, CMD_TRAY_RESET,
-    CMD_TRAY_TOGGLE_VISIBLE, TRAY_CALLBACK_MSG,
+    CMD_TRAY_TEST_BUBBLE, CMD_TRAY_TOGGLE_VISIBLE, TRAY_CALLBACK_MSG,
 };
 
 /// 右键菜单命令 ID。
@@ -381,6 +381,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         CMD_TRAY_EXIT => {
                             let _ = (*st).events.send(PetEvent::MenuQuit);
                         }
+                        CMD_TRAY_TEST_BUBBLE => {
+                            let _ = (*st).events.send(PetEvent::MenuTestBubble);
+                        }
                         c if c >= CMD_CHAR_BASE => {
                             let idx = c - CMD_CHAR_BASE;
                             if let Some((id, _)) = characters.get(idx) {
@@ -430,6 +433,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// 显示桌宠窗口。
+pub unsafe fn show_window(hwnd: HWND) {
+    let _ = ShowWindow(hwnd, SW_SHOWNA);
+}
+
+/// 隐藏桌宠窗口。
+pub unsafe fn hide_window(hwnd: HWND) {
+    let _ = ShowWindow(hwnd, SW_HIDE);
 }
 
 /// 桌宠窗口的屏幕矩形（供气泡定位）。

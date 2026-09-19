@@ -102,7 +102,7 @@ impl App {
             }
 
             // 启动 IPC server（Named Pipe）
-            let (ipc_server, ipc_rx) = IpcServer::start();
+            let (ipc_server, ipc_rx, ipc_status) = IpcServer::start();
             log_line("ipc server started");
 
             let mut last = Instant::now();
@@ -123,6 +123,14 @@ impl App {
                 last = now;
 
                 let visible = IsWindowVisible(hwnd).as_bool();
+                // 更新供 IPC 只读查询的状态快照
+                {
+                    let mut rc = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rc);
+                    ipc_status.set_visible(visible);
+                    ipc_status.set_rect(rc.left, rc.top, rc.right, rc.bottom);
+                    ipc_status.set_active_character(&self.config.character.active_character);
+                }
 
                 // 处理事件（角色切换 / 行为 / 气泡反馈）
                 self.process_events(
@@ -395,6 +403,9 @@ impl App {
                             }
                         }
                     }
+                }
+                ValidatedRequest::Query { .. } => {
+                    // query 已在 IPC worker 内直接应答，这里不会到达
                 }
                 ValidatedRequest::Command { command, .. } => match command {
                     ValidatedCommand::Show => {

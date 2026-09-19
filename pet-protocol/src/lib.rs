@@ -84,6 +84,28 @@ pub enum Request {
     Expression(ExpressionRequest),
     #[serde(rename = "command")]
     Command(CommandRequest),
+    /// 只读查询（v1 兼容扩展）。
+    #[serde(rename = "query")]
+    Query(QueryRequest),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QueryRequest {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub id: Option<String>,
+    /// 目前支持："status"。
+    pub query: String,
+}
+
+/// 桌宠状态快照（只读查询响应）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusSnapshot {
+    pub online: bool,
+    pub visible: bool,
+    pub window_rect: [i32; 4],
+    pub active_character: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +152,10 @@ pub enum WireRequest {
         id: Option<String>,
         command: WireCommand,
     },
+    Query {
+        id: Option<String>,
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +172,7 @@ impl WireRequest {
         match self {
             WireRequest::Expression { id, .. } => id.clone(),
             WireRequest::Command { id, .. } => id.clone(),
+            WireRequest::Query { id, .. } => id.clone(),
         }
     }
 }
@@ -190,9 +217,9 @@ pub fn parse(text: &str) -> Result<WireRequest, ValidateError> {
                 }
             }
             let motion = match &e.motion {
-                Some(m) => Some(
-                    Motion::parse(m).ok_or_else(|| ValidateError::UnknownMotion(m.clone()))?,
-                ),
+                Some(m) => {
+                    Some(Motion::parse(m).ok_or_else(|| ValidateError::UnknownMotion(m.clone()))?)
+                }
                 None => None,
             };
             let priority = match &e.priority {
@@ -232,9 +259,15 @@ pub fn parse(text: &str) -> Result<WireRequest, ValidateError> {
                 "character" => WireCommand::Character(c.character.clone().unwrap_or_default()),
                 other => return Err(ValidateError::UnknownCommand(other.to_string())),
             };
-            Ok(WireRequest::Command {
-                id: c.id,
-                command,
+            Ok(WireRequest::Command { id: c.id, command })
+        }
+        Request::Query(q) => {
+            if q.version != 0 && q.version != PROTOCOL_VERSION {
+                return Err(ValidateError::UnsupportedVersion(q.version));
+            }
+            Ok(WireRequest::Query {
+                id: q.id,
+                query: q.query,
             })
         }
     }
@@ -305,6 +338,16 @@ pub fn build_expression(
         obj["id"] = serde_json::Value::String(i.to_string());
     }
     obj.to_string()
+}
+
+/// 构造 query 请求 JSON。
+pub fn build_query(query: &str) -> String {
+    serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "type": "query",
+        "query": query,
+    })
+    .to_string()
 }
 
 /// 构造 command 请求 JSON。

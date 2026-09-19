@@ -1,7 +1,8 @@
-//! 极简 Named Pipe 客户端（与 DesktopPet 的 `\.\pipe\DesktopPetExpression_v1` 通信）。
+//! 极简 Named Pipe 客户端（与 DesktopPet 的 `\\.\pipe\DesktopPetExpression_v1` 通信）。
 //!
 //! 不依赖 desktop-pet Runtime；只用 pet-protocol 的协议构造 + Win32 管道。
 
+#[allow(unused_imports)]
 use pet_protocol::{Motion, Priority};
 
 #[cfg(windows)]
@@ -22,10 +23,20 @@ pub fn send_command(command: &str) -> Result<String, String> {
     send_raw(&json)
 }
 
+/// 只读查询桌宠状态（供输入框定位）。
+#[cfg(windows)]
+pub fn query_status() -> Option<pet_protocol::StatusSnapshot> {
+    let json = pet_protocol::build_query("status");
+    let resp = send_raw(&json).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&resp).ok()?;
+    let status = v.get("status")?;
+    serde_json::from_value(status.clone()).ok()
+}
+
 #[cfg(windows)]
 fn send_raw(json: &str) -> Result<String, String> {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_BUSY};
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE,
         OPEN_EXISTING,
@@ -37,33 +48,28 @@ fn send_raw(json: &str) -> Result<String, String> {
         .chain(std::iter::once(0))
         .collect();
 
+    const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
+
     unsafe {
-        let handle = match CreateFileW(
-            PCWSTR(name.as_ptr()),
-            0x8000_0000 | 0x4000_0000,
-            FILE_SHARE_NONE,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        ) {
+        let open = || {
+            CreateFileW(
+                PCWSTR(name.as_ptr()),
+                GENERIC_READ_WRITE,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        };
+
+        let handle = match open() {
             Ok(h) => h,
             Err(_) => {
-                // 管道忙则短暂等待
                 let _ = WaitNamedPipeW(PCWSTR(name.as_ptr()), 500);
-                CreateFileW(
-                    PCWSTR(name.as_ptr()),
-                    0x8000_0000 | 0x4000_0000,
-                    FILE_SHARE_NONE,
-                    None,
-                    OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL,
-                    None,
-                )
-                .map_err(|_| "cannot connect to DesktopPet (offline?)".to_string())?
+                open().map_err(|_| "cannot connect to DesktopPet (offline?)".to_string())?
             }
         };
-        let _ = ERROR_PIPE_BUSY;
 
         let mut n = 0u32;
         if WriteFile(handle, Some(json.as_bytes()), Some(&mut n), None).is_err() {
@@ -97,4 +103,9 @@ pub fn send_expression(
 #[allow(dead_code)]
 pub fn send_command(_command: &str) -> Result<String, String> {
     Err("named pipe only supported on windows".into())
+}
+
+#[cfg(not(windows))]
+pub fn query_status() -> Option<pet_protocol::StatusSnapshot> {
+    None
 }

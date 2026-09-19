@@ -45,6 +45,19 @@ cargo build --release
 
 不自动下载模型、不启动/杀死用户的模型服务、不扫描全机。
 
+## UI 模式（第八阶段）
+
+```powershell
+pet-agent.exe ui      # 常驻：原生输入框 + 托盘 + 全局快捷键
+```
+
+- Enter 发送 / Shift+Enter 换行 / Esc 隐藏；`Ctrl+Alt+Space` 唤起。
+- 输入框优先出现在桌宠附近（经 IPC `query_status`）。
+- Agent 托盘：打开输入框 / 清空对话 / 开机启动 / 退出（键名 `DesktopPetAgent`）。
+- 单实例：`DesktopPet_Agent_SingleInstance_v1`；第二实例唤醒已有实例后退出。
+- AI 请求在 worker 线程，UI 不冻结；可「停止」取消（结果丢弃）。
+- Provider 离线不退出；显示 Offline/Error，详细错误写日志。
+
 ## 边界
 
 - 不接触 HWND / Cubism / D3D；不修改桌宠配置；不绕过 IPC。

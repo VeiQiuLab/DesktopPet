@@ -9,6 +9,8 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use crate::ipc::status::SharedStatus;
+
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_BROKEN_PIPE, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -82,18 +84,24 @@ pub struct IpcServer {
 }
 
 impl IpcServer {
-    /// 启动 server。返回 (IpcServer, Receiver)。
-    pub fn start() -> (Self, Receiver<crate::ipc::protocol::ValidatedRequest>) {
+    /// 启动 server。返回 (IpcServer, Receiver, SharedStatus)。
+    pub fn start() -> (
+        Self,
+        Receiver<crate::ipc::protocol::ValidatedRequest>,
+        Arc<SharedStatus>,
+    ) {
         let (tx, rx) = sync_channel::<crate::ipc::protocol::ValidatedRequest>(QUEUE_CAPACITY);
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
+        let status = Arc::new(SharedStatus::new());
+        let status2 = status.clone();
 
         let join = std::thread::Builder::new()
             .name("ipc-worker".into())
-            .spawn(move || worker_loop(tx, stop2))
+            .spawn(move || worker_loop(tx, stop2, status2))
             .ok();
 
-        (IpcServer { stop, join }, rx)
+        (IpcServer { stop, join }, rx, status)
     }
 }
 
@@ -109,7 +117,11 @@ impl Drop for IpcServer {
 }
 
 /// worker 主循环。
-fn worker_loop(tx: SyncSender<crate::ipc::protocol::ValidatedRequest>, stop: Arc<AtomicBool>) {
+fn worker_loop(
+    tx: SyncSender<crate::ipc::protocol::ValidatedRequest>,
+    stop: Arc<AtomicBool>,
+    status: Arc<SharedStatus>,
+) {
     unsafe {
         loop {
             if stop.load(Ordering::SeqCst) {
@@ -149,7 +161,7 @@ fn worker_loop(tx: SyncSender<crate::ipc::protocol::ValidatedRequest>, stop: Arc
                 break;
             }
 
-            handle_connection(handle, &tx, &stop);
+            handle_connection(handle, &tx, &stop, &status);
 
             let _ = DisconnectNamedPipe(handle);
             let _ = CloseHandle(handle);
@@ -163,6 +175,7 @@ unsafe fn handle_connection(
     handle: HANDLE,
     tx: &SyncSender<crate::ipc::protocol::ValidatedRequest>,
     stop: &AtomicBool,
+    status: &SharedStatus,
 ) {
     // 读取：单条消息，最大 MAX_MESSAGE_BYTES
     let mut buf = vec![0u8; crate::ipc::protocol::MAX_MESSAGE_BYTES + 1];
@@ -218,9 +231,26 @@ unsafe fn handle_connection(
 
     match crate::ipc::protocol::parse_request(text) {
         Ok(req) => {
+            // Query 是只读请求：worker 直接从共享快照应答，不入队。
+            if let crate::ipc::protocol::ValidatedRequest::Query { id, query } = &req {
+                let resp = if query == "status" {
+                    let snap = status.snapshot();
+                    let json = serde_json::to_string(&snap).unwrap_or_default();
+                    // 用 ok + 内嵌 status 字段
+                    format!(
+                        "{{\"ok\":true,\"id\":{},\"status\":{json}}}",
+                        json_opt_id(id)
+                    )
+                } else {
+                    crate::ipc::protocol::Response::err(id.clone(), "unknown query").to_json()
+                };
+                write_raw(handle, &resp);
+                return;
+            }
             let id = match &req {
                 crate::ipc::protocol::ValidatedRequest::Expression(e) => e.id.clone(),
                 crate::ipc::protocol::ValidatedRequest::Command { id, .. } => id.clone(),
+                crate::ipc::protocol::ValidatedRequest::Query { id, .. } => id.clone(),
             };
             // 有界队列：满则快速失败
             match tx.try_send(req) {
@@ -247,10 +277,19 @@ unsafe fn handle_connection(
 }
 
 unsafe fn write_response(handle: HANDLE, resp: &crate::ipc::protocol::Response) {
-    if let Ok(json) = serde_json::to_string(resp) {
-        let mut n = 0u32;
-        let _ = WriteFile(handle, Some(json.as_bytes()), Some(&mut n), None);
-        let _ = FlushFileBuffers(handle);
+    write_raw(handle, &resp.to_json());
+}
+
+unsafe fn write_raw(handle: HANDLE, json: &str) {
+    let mut n = 0u32;
+    let _ = WriteFile(handle, Some(json.as_bytes()), Some(&mut n), None);
+    let _ = FlushFileBuffers(handle);
+}
+
+fn json_opt_id(id: &Option<String>) -> String {
+    match id {
+        Some(s) => serde_json::to_string(s).unwrap_or_else(|_| "null".to_string()),
+        None => "null".to_string(),
     }
 }
 

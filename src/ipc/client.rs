@@ -79,6 +79,7 @@ pub fn run_cli(args: &[String]) -> Option<i32> {
             })
             .to_string()
         }
+        "status" | "query" => pet_protocol::build_query("status"),
         _ => return None,
     };
 

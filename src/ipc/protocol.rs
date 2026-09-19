@@ -17,6 +17,10 @@ pub enum ValidatedRequest {
         id: Option<String>,
         command: ValidatedCommand,
     },
+    Query {
+        id: Option<String>,
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -83,5 +87,6 @@ pub fn parse_request(json: &str) -> Result<ValidatedRequest, String> {
             };
             ValidatedRequest::Command { id, command: cmd }
         }
+        Wire::Query { id, query } => ValidatedRequest::Query { id, query },
     })
 }

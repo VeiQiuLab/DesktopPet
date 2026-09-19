@@ -5,11 +5,17 @@
 //!
 //! 本进程不接触 HWND / Cubism / D3D；不修改桌宠配置；不绕过 IPC。
 
+mod autostart;
 mod config;
 mod context;
 mod ipc;
 mod mapper;
 mod provider;
+#[cfg(windows)]
+mod single_instance;
+#[cfg(windows)]
+mod ui;
+mod worker;
 
 use std::io::{self, BufRead, Write};
 
@@ -32,6 +38,23 @@ fn main() {
             let text = args.get(2).cloned().unwrap_or_default();
             run_once(&text, provider_override.as_deref());
         }
+        "ui" => {
+            #[cfg(windows)]
+            {
+                // 单实例：已有实例则唤醒并退出
+                let _instance = match single_instance::SingleInstance::acquire() {
+                    Some(i) => i,
+                    None => {
+                        single_instance::wake_existing();
+                        eprintln!("[pet-agent] another instance is running, waking it");
+                        std::process::exit(0);
+                    }
+                };
+                ui::run_ui(provider_override.as_deref());
+            }
+            #[cfg(not(windows))]
+            eprintln!("ui mode only supported on windows");
+        }
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("unknown subcommand: {sub}");
@@ -47,6 +70,7 @@ fn print_help() {
     println!("Usage:");
     println!("  pet-agent chat [--provider mock|openai_compatible]");
     println!("  pet-agent once \"你好\" [--provider ...]");
+    println!("  pet-agent ui [--provider ...]   # 常驻输入框 + 托盘 + 全局快捷键");
 }
 
 fn build_provider(cfg: &AgentConfig, override_name: Option<&str>) -> Box<dyn Provider> {
@@ -149,14 +173,17 @@ fn truncate_for_bubble(text: &str, max_chars: usize) -> String {
     out
 }
 
-/// Agent 日志（写入 pet-agent.log，默认不记录对话内容）。
+/// Agent 日志（写入 exe 同目录 pet-agent.log，默认不记录对话内容）。
 pub fn log_line(msg: &str) {
     eprintln!("[pet-agent] {msg}");
     use std::io::Write;
+    let mut p = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    p.pop();
+    p.push("pet-agent.log");
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("pet-agent.log")
+        .open(&p)
     {
         let _ = writeln!(f, "[pet-agent] {msg}");
     }

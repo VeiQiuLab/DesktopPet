@@ -547,4 +547,90 @@ DesktopPet 与 pet-agent 完全独立进程：任一方启动 / 退出 / 崩溃�
 
 - Memory / Persona：在 pet-agent 的 Conversation 层扩展（本阶段明确不做）。
 - 更多 Provider：新增 `impl Provider` 即可。
-- 用户输入 UI：未来可给桌宠加原生输入框，通过同一 IPC 提交。
+
+---
+
+## 17. pet-agent UI / 常驻前端（第八阶段）
+
+### 17.1 架构
+
+```
+UI Thread (Win32 窗口 / 控件 / 消息循环 / 托盘 / 热键)
+   ↓ request channel
+AI Worker Thread (HTTP / Provider)          ← 绝不阻塞 UI
+   ↓ result channel
+UI Thread → ExpressionMapper → DesktopPet IPC
+```
+
+- `pet-agent ui`：新增常驻模式（保留 `chat` / `once`）。
+- UI 属于 AI Bridge，**不在 desktop-pet.exe 内**。
+
+### 17.2 输入窗口
+
+- 原生 Win32：`EDIT`(多行) + `BUTTON` + `STATIC`，类名 `PetAgentInputWnd`，380x150。
+- Tool Window（不进任务栏）、置顶、中文字体、支持中文 IME。
+- Enter 发送；Shift+Enter 换行；Esc 隐藏（不退出）。
+- 空文本不发送；请求进行中按钮变「停止」，不重复提交。
+- 窗口位置优先桌宠附近（经 IPC `query_status` 读取 `window_rect`），
+  否则鼠标所在位置；DPI 由进程级 Per-Monitor V2 保障。
+
+### 17.3 全局快捷键
+
+- `RegisterHotKey(Ctrl+Alt+Space)`（`MOD_NOREPEAT`）。
+- 隐藏时显示输入框，已显示时聚焦；注册失败写日志（不崩溃）。
+
+### 17.4 Agent Tray（与 DesktopPet 托盘职责分离）
+
+- pet-agent 托盘：打开输入框 / 清空对话 / 开机启动 / 退出。
+- **不**控制 Live2D / Character / DesktopPet 窗口（那些归 Runtime）。
+
+### 17.5 Single Instance
+
+- Named Mutex `DesktopPet_Agent_SingleInstance_v1`。
+- 第二实例：注册消息 `DesktopPetAgent_WakeInput_v1` 广播唤醒已有实例显示输入框，然后退出。
+- 实测：`before=1 after=1`。
+
+### 17.6 Autostart（独立于 DesktopPet）
+
+- HKCU Run，键名 `DesktopPetAgent`（DesktopPet 的是 `DesktopPet`）。
+- 可检测 / 启用 / 关闭，无需管理员。
+
+### 17.7 Provider 生命周期
+
+- 启动时**不因 Provider 离线而退出**；状态显示 Offline/Ready。
+- 用户发送时才连接；Provider 后续启动则下次请求恢复，无需重启 agent。
+
+### 17.8 请求线程与取消
+
+- AI 请求在 worker 线程；UI 始终可拖动、不「未响应」；DesktopPet 保持 60FPS。
+- 取消：`generation` 标记；点「停止」后结果回来即丢弃（不展示、不写 history、不发桌宠）。
+
+### 17.9 错误体验
+
+- UI 只显示简短「模型暂时无法连接」；详细错误写 `pet-agent.log`。
+- 不把 socket / HTTP / JSON 错误暴露到桌宠气泡。
+
+### 17.10 DesktopPet 离线
+
+- 用户仍可对话，UI 提示「桌宠当前未运行」；桌宠后续启动后下条回复恢复气泡。
+
+### 17.11 Protocol 扩展
+
+- 新增只读 `type: "query", query: "status"`（v1 兼容）。
+- 响应 `StatusSnapshot { online, visible, window_rect, active_character }`。
+- DesktopPet 侧由 IPC worker 直接读取 `SharedStatus`（原子快照）应答，不入队、不碰 HWND。
+
+### 17.12 边界
+
+```
+DesktopPet = 显示 / 动作 / Presentation Runtime
+pet-agent  = 用户输入 / AI / Conversation / Provider
+```
+
+### 17.13 已知技术债（第八阶段）
+
+- UI 模式对话历史从简（仅 system + 当前 user；短上下文主要由 `chat` 模式维护）。
+- 无流式 token 气泡；按完整回复处理。
+- 真实 OpenAI-compatible endpoint 未联调（本机无运行中的服务）。
+- Agent 托盘图标用系统默认图标。
+- 重启 agent 后 `pet-agent.config.json` 的 hotkey 字段尚未可配置（固定 Ctrl+Alt+Space）。

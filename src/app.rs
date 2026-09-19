@@ -214,6 +214,9 @@ impl App {
                         if let Some(ls) = lipsync.as_mut() {
                             let mouth = ls.tick(dt);
                             m.set_mouth_open(mouth);
+                            if mouth > 0.05 {
+                                crate::config::log_debug(&format!("mouth open v={mouth:.3}"));
+                            }
                         }
                     }
 
@@ -424,6 +427,11 @@ impl App {
                     samples,
                     start_delay_ms,
                 } => {
+                    crate::config::log_debug(&format!(
+                        "lipsync received: {} samples @ {}Hz",
+                        samples.len(),
+                        sample_hz
+                    ));
                     if let Some(ls) = lipsync.as_mut() {
                         ls.set_envelope(sample_hz, samples, start_delay_ms);
                     }

@@ -27,6 +27,9 @@ pet-agent.config.json
 /pet-agent/voices/*.onnx
 /pet-agent/voices/*.onnx.json
 
+# Piper 运行时 / 私有 Python 环境（不入库）
+/pet-agent/tools/
+
 # 临时启动脚本
 _launch_*.bat
 _l.bat

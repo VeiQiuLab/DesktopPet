@@ -1,11 +1,13 @@
-//! Piper 本地 TTS Provider（调用已存在的 piper.exe + voice model）。
+//! Piper 本地 TTS Provider（调用官方 piper-tts CLI）。
 //!
-//! 安全：
-//! - 用 `Command` 独立参数，绝不 shell 拼接；
-//! - 文本走 stdin（避免 command line 注入 / 引号 / 长度问题）；
-//! - 超时后 kill + wait；临时文件用后即删。
+//! 官方运行时为 `python -m piper`（piper-tts 包）。配置中：
+//! - `exe`   = python 解释器路径（项目私有 venv）
+//! - `model` = voice .onnx 路径
+//! - `config`= voice .onnx.json 路径
+//! - `data_dir` 可选（本实现直接用绝对 model/config，无需 data-dir）
 //!
-//! 链路：Piper → WAV → AudioOutput → Envelope → Playback + LipSync（不绕过 Playback）。
+//! 安全：Command 独立参数（无 shell 拼接）；文本走 stdin（UTF-8）；
+//! 超时 kill + wait；临时 WAV 用后即删。
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -28,7 +30,7 @@ impl PiperProvider {
         }
     }
 
-    /// 诊断：检查 exe / model / config 是否存在，并做一次极短 synthesis。
+    /// 诊断：检查 exe / model / config，并做一次极短 synthesis。
     pub fn check(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!("exe: {}", self.cfg.exe));
@@ -52,7 +54,16 @@ impl PiperProvider {
         if cfg_path.is_file() {
             lines.push("  -> ok".into());
         } else {
-            lines.push("  -> missing (may be optional)".into());
+            lines.push("  -> MISSING".into());
+        }
+        // 极短 synthesis
+        match self.synthesize_impl("测试") {
+            Ok(a) => lines.push(format!(
+                "short synthesis: ok ({} samples, {} Hz)",
+                a.pcm_i16.len(),
+                a.sample_rate
+            )),
+            Err(e) => lines.push(format!("short synthesis: FAILED ({e})")),
         }
         lines
     }
@@ -65,13 +76,12 @@ impl PiperProvider {
         }
     }
 
-    /// 校验配置，返回明确错误。
     fn validate(&self) -> Result<(), String> {
         if self.cfg.exe.trim().is_empty() {
-            return Err("piper exe not configured".into());
+            return Err("piper runtime (exe/python) not configured".into());
         }
         if !std::path::Path::new(&self.cfg.exe).is_file() {
-            return Err(format!("piper exe not found: {}", self.cfg.exe));
+            return Err(format!("piper runtime not found: {}", self.cfg.exe));
         }
         if self.cfg.model.trim().is_empty() {
             return Err("piper model not configured".into());
@@ -82,7 +92,6 @@ impl PiperProvider {
         Ok(())
     }
 
-    /// 合成到内存 AudioOutput。
     pub fn synthesize_impl(&self, text: &str) -> Result<AudioOutput, String> {
         self.validate()?;
         if text.trim().is_empty() {
@@ -92,13 +101,19 @@ impl PiperProvider {
         let out_path = temp::unique_path("wav");
         let out_str = out_path.to_string_lossy().to_string();
 
-        // 独立参数（无 shell）
+        // python -m piper -m <model> -c <config> -f <out>
         let mut cmd = Command::new(&self.cfg.exe);
-        cmd.arg("--model")
-            .arg(&self.cfg.model)
-            .arg("--output_file")
-            .arg(&out_str)
-            .stdin(Stdio::piped())
+        cmd.arg("-m").arg("piper");
+        cmd.arg("-m").arg(&self.cfg.model);
+        let cfg_path = self.resolve_config_path();
+        if cfg_path.is_file() {
+            cmd.arg("-c").arg(&cfg_path);
+        }
+        cmd.arg("-f").arg(&out_str);
+        // 强制 Python 以 UTF-8 处理 stdin（Windows 默认按 locale/cp936）
+        cmd.env("PYTHONIOENCODING", "utf-8");
+        cmd.env("PYTHONUTF8", "1");
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
@@ -106,14 +121,11 @@ impl PiperProvider {
             .spawn()
             .map_err(|e| format!("spawn piper failed: {e}"))?;
 
-        // 文本走 stdin（UTF-8）
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(text.as_bytes());
             let _ = stdin.write_all(b"\n");
-            // 关闭 stdin 触发处理
         }
 
-        // 轮询等待 + 超时
         let deadline = Instant::now() + Duration::from_secs(self.timeout_secs.max(1));
         let status = loop {
             match child.try_wait() {
@@ -141,7 +153,17 @@ impl PiperProvider {
                 Err(format!("piper timeout after {}s", self.timeout_secs))
             }
             Some(s) if !s.success() => {
+                let err_text = child
+                    .stderr
+                    .take()
+                    .and_then(|mut e| {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        e.read_to_string(&mut buf).ok().map(|_| buf)
+                    })
+                    .unwrap_or_default();
                 let _ = std::fs::remove_file(&out_path);
+                crate::log_line(&format!("piper stderr: {err_text}"));
                 Err(format!("piper exited with code {:?}", s.code()))
             }
             Some(_) => {
@@ -150,7 +172,7 @@ impl PiperProvider {
                     format!("read piper output failed: {e}")
                 })?;
                 let _ = std::fs::remove_file(&out_path);
-                let audio = parse_wav(&bytes)?;
+                let audio = crate::tts::sapi::parse_wav(&bytes)?;
                 if audio.is_empty() {
                     return Err("piper produced empty audio".into());
                 }
@@ -158,9 +180,4 @@ impl PiperProvider {
             }
         }
     }
-}
-
-/// 解析 16-bit PCM WAV → AudioOutput（与 sapi 共用逻辑）。
-pub fn parse_wav(bytes: &[u8]) -> Result<AudioOutput, String> {
-    crate::tts::sapi::parse_wav(bytes)
 }

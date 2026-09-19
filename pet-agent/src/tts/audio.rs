@@ -70,8 +70,8 @@ pub fn envelope(audio: &AudioOutput, sample_hz: f32, gain: f32, noise_floor: f32
     let total_frames = (audio.pcm_i16.len() as f32 / ch) as usize;
     let mut out = Vec::new();
     let mut i = 0usize;
-    // 计算总体峰值用于归一化
-    let mut peak = 1.0f32;
+    // 计算总体峰值用于归一化（从 0 开始，否则峰值<1时归一化失效）
+    let mut peak = 0.0f32;
     for s in &audio.pcm_i16 {
         let v = (*s as f32 / 32768.0).abs();
         if v > peak {

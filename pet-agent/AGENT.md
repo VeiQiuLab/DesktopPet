@@ -71,6 +71,14 @@ pet-agent.exe ui      # 常驻：原生输入框 + 托盘 + 全局快捷键
 - TTS 失败不影响 AI 文本、气泡与 history。
 - 未来可替换为 SAPI / Edge TTS / Piper / GPT-SoVITS（仅需新增 `impl TtsProvider`）。
 
+## Persona / Memory（第十二阶段）
+
+- Persona：`personas/<id>/persona.json`；与 Live2D 解耦。
+- Memory V1：SQLite `data/memory.db`；显式「记住：X」写 active，隐式推测进 pending，冲突进 pending update。
+- PromptBuilder：Persona → Memory（背景数据）→ 历史 → 当前 user。
+- CLI：`pet-agent memory list|pending|accept|reject|delete|export|backup|audit`。
+- 详见 `MEMORY.md`。
+
 ## 边界
 
 - 不接触 HWND / Cubism / D3D；不修改桌宠配置；不绕过 IPC。

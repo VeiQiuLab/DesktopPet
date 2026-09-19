@@ -14,6 +14,7 @@ pub fn make(name: &str, cfg: &AgentConfig) -> Box<dyn Provider> {
     match name {
         "mock" => Box::new(MockProvider),
         "context_mock" => Box::new(ContextMockProvider),
+        "memory_mock" => Box::new(MemoryAwareMockProvider),
         "openai_compatible" => Box::new(OpenAiCompatibleProvider::new(cfg)),
         other => {
             eprintln!("[pet-agent] unknown provider '{other}', falling back to mock");
@@ -43,6 +44,30 @@ impl Provider for MockProvider {
             format!("（mock）我听到了：{t}")
         };
         Ok(reply)
+    }
+}
+
+/// 回显是否注入了 memory 块及历史轮数（用于验证 PromptBuilder）。
+pub struct MemoryAwareMockProvider;
+
+impl Provider for MemoryAwareMockProvider {
+    fn name(&self) -> &str {
+        "memory_mock"
+    }
+    fn generate(&self, messages: &[ChatMessage], _user_text: &str) -> Result<String, String> {
+        let has_mem = messages
+            .iter()
+            .any(|m| m.content.contains("[Relevant user memory]"));
+        let mem_lines = messages
+            .iter()
+            .filter(|m| m.content.contains("[Relevant user memory]"))
+            .map(|m| m.content.matches("- (").count())
+            .sum::<usize>();
+        let usr = messages.iter().filter(|m| m.role == "user").count();
+        let ast = messages.iter().filter(|m| m.role == "assistant").count();
+        Ok(format!(
+            "mem={has_mem} mem_items={mem_lines} user={usr} assistant={ast}"
+        ))
     }
 }
 

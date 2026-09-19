@@ -57,6 +57,12 @@ struct UiContext {
     pending_user: Option<(u64, String)>,
     /// TTS 控制器。
     tts: crate::tts::TtsController,
+    /// Persona。
+    persona: crate::persona::Persona,
+    /// Memory（None = 不可用，降级无记忆模式）。
+    memory: Option<crate::memory::MemoryManager>,
+    /// 待确认反馈（如「已加入记忆」）。
+    toast: Option<String>,
 }
 
 pub fn run_ui(provider_override: Option<&str>) {
@@ -141,6 +147,9 @@ pub fn run_ui(provider_override: Option<&str>) {
                 conv: crate::context::Conversation::new(&cfg),
                 pending_user: None,
                 tts: crate::tts::TtsController::new(&cfg),
+                persona: crate::persona::Persona::load(&crate::persona::Persona::active_id()),
+                memory: open_memory(),
+                toast: None,
             });
         });
 
@@ -166,6 +175,23 @@ pub fn run_ui(provider_override: Option<&str>) {
         remove_tray(hwnd);
         let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID);
         log_line("ui loop exited");
+    }
+}
+
+/// 打开 memory DB（失败降级为 None）。
+fn open_memory() -> Option<crate::memory::MemoryManager> {
+    let mut p = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    p.pop();
+    p.push("data");
+    p.push("memory.db");
+    match crate::memory::MemoryManager::open(&p) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log_line(&format!(
+                "memory unavailable: {e} (degraded to no-memory mode)"
+            ));
+            None
+        }
     }
 }
 
@@ -374,12 +400,44 @@ unsafe fn submit_text(hwnd: HWND, text: &str) {
         ctx.active_gen = Some(gen);
         ctx.thinking = true;
 
-        // 短期多轮：system + history + 本轮 user
-        let mut msgs = ctx.conv.messages();
-        msgs.push(crate::context::ChatMessage {
-            role: "user",
-            content: text.to_string(),
-        });
+        // 显式「记住……」→ 直接写入 active（有审计日志）；冲突则进入 pending
+        if let Some(mem) = ctx.memory.as_ref() {
+            if let Some(content) = crate::memory::intent::detect_explicit(text) {
+                let kind = crate::memory::intent::suggest_kind(&content);
+                if let Some(existing) = mem.find_conflict(&content) {
+                    let _ =
+                        mem.propose("update", kind, &content, Some(existing.id), "user_explicit");
+                    ctx.toast = Some("已记录为待确认修改。".into());
+                } else {
+                    match mem.create(kind, &content, "user_explicit") {
+                        Ok(_) => ctx.toast = Some("已加入记忆。".into()),
+                        Err(e) => log_line(&format!("memory create failed: {e}")),
+                    }
+                }
+            } else if let Some(new_val) = crate::memory::intent::detect_change(text) {
+                // 显式修改意图：优先按新值找冲突项，否则回退最近一条 active
+                let target = mem
+                    .find_conflict(&new_val)
+                    .or_else(|| mem.most_recent_active());
+                if let Some(existing) = target {
+                    let kind = crate::memory::intent::suggest_kind(&existing.content);
+                    let _ =
+                        mem.propose("update", kind, &new_val, Some(existing.id), "user_explicit");
+                    ctx.toast = Some("已记录为待确认修改。".into());
+                }
+            } else if crate::memory::intent::looks_memorable(text) {
+                let kind = crate::memory::intent::suggest_kind(text);
+                let _ = mem.propose("create", kind, text, None, "implicit");
+            }
+        }
+        // Prompt：Persona → Memory → 历史 → 当前 user
+        let memories = ctx
+            .memory
+            .as_ref()
+            .map(|m| m.retrieve(text, 12, 1200))
+            .unwrap_or_default();
+        let msgs =
+            crate::prompt::PromptBuilder::build(&ctx.persona, &memories, &ctx.conv.history(), text);
         ctx.pending_user = Some((gen, text.to_string()));
         let req = AiRequest {
             generation: gen,
@@ -402,7 +460,11 @@ unsafe fn submit_text(hwnd: HWND, text: &str) {
         set_status(hwnd, "内部错误：worker 不可用");
         return;
     }
-    set_status(hwnd, &format!("{pname} · Thinking…"));
+    let toast = CTX.with(|c| c.borrow_mut().as_mut().and_then(|ctx| ctx.toast.take()));
+    match toast {
+        Some(t) => set_status(hwnd, &t),
+        None => set_status(hwnd, &format!("{pname} · Thinking…")),
+    }
     toggle_send_button(hwnd, true);
     log_line(&format!(
         "submitted request ({} chars)",

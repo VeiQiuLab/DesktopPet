@@ -30,6 +30,11 @@ pet-agent.config.json
 # Piper 运行时 / 私有 Python 环境（不入库）
 /pet-agent/tools/
 
+# Memory 数据库 / 备份（用户数据，不入库）
+/pet-agent/data/
+/pet-agent/target/**/data/
+/pet-agent/target/**/backups/
+
 # 临时启动脚本
 _launch_*.bat
 _l.bat

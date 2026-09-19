@@ -39,6 +39,11 @@ impl Conversation {
         self.trim();
     }
 
+    /// 仅历史轮次（不含 system），供 PromptBuilder 使用。
+    pub fn history(&self) -> Vec<ChatMessage> {
+        self.turns.clone()
+    }
+
     /// system + 最近 N 轮。
     pub fn messages(&self) -> Vec<ChatMessage> {
         let mut out = Vec::with_capacity(self.turns.len() + 1);

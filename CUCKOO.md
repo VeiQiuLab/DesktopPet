@@ -883,6 +883,52 @@ TtsProvider
 - `provider=piper` 且 Piper 不可用：AI 文本 / 气泡正常，TTS 报错，**不播放 mock 静音**。
 - 显式配置才 fallback；第一版不做自动 fallback。
 
+## 21. Persona + Memory V1（第十二阶段）
+
+### 21.1 边界
+
+Persona / Memory **只存在于 pet-agent**；DesktopPet 不知道 Persona / Memory / Prompt / DB。
+
+### 21.2 Persona
+
+- `pet-agent/src/persona/`，配置 `personas/<id>/persona.json`（`id/name/system_prompt/style`）。
+- 与 Live2D Character Package **解耦**（同一模型可配不同 persona）。
+- V1 稳定、无情绪数值/好感度/动态漂移。
+
+### 21.3 Memory V1
+
+- SQLite `pet-agent/data/memory.db`（WAL，schema_version=1）；表 `memories` / `pending_changes` / `audit_log`。
+- 类型：fact / preference / project / relationship / custom。
+- 原则：可查看/可改/可删、不自动删除、不静默覆盖、审计日志。
+- 显式「记住：X」→ active（审计）；隐式推测 → pending；冲突 → pending update。
+
+### 21.4 PromptBuilder
+
+`System Persona → [Relevant user memory] → 短期对话 → 当前 user`。
+Memory 标注为背景数据（非指令）；Persona System 永远高于 memory。
+
+### 21.5 Retrieval V1
+
+pinned 优先 + keyword + recency；max 12 条 / 1200 字符（context budget，无 embedding）。
+
+### 21.6 管理入口
+
+CLI：`memory list/pending/accept/reject/delete/export/backup/audit`。UI/Tray 入口为后续。
+
+### 21.7 Failure / Privacy
+
+- DB 失败 → 无记忆模式降级，不影响聊天与 DesktopPet。
+- Memory 只存本地；云端 Provider 时注入的 memories 会随 prompt 发出（已在 MEMORY.md 说明）。
+
+### 21.8 已知技术债（第十二阶段）
+
+- 冲突检测为简单关键词启发式，非语义。
+- 隐式 suggestion 可能仍有启发式误判（已排除疑问句）。
+- Memory 管理 UI 以 CLI 为主，尚无原生窗口。
+- import 未实现（export 已就绪）。
+
+---
+
 ### 20.12 已知技术债（第十一阶段）
 
 - **本机未安装 Piper 与 voice model**，真实发声 + 嘴型实机闭环**未完成**（代码/配置检查已就绪）。

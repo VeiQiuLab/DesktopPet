@@ -10,6 +10,9 @@ mod config;
 mod context;
 mod ipc;
 mod mapper;
+mod memory;
+mod persona;
+mod prompt;
 mod provider;
 #[cfg(windows)]
 mod single_instance;
@@ -59,6 +62,7 @@ fn main() {
         "tts-voices" => run_tts_voices(),
         "envelope-test" => run_envelope_test(),
         "piper-check" => run_piper_check(),
+        "memory" => run_memory_cli(&args),
         "tts-test" => {
             let text = args
                 .get(2)
@@ -86,6 +90,9 @@ fn print_help() {
     println!("  pet-agent tts-voices            # 列出系统可用 SAPI voice");
     println!("  pet-agent provider-test         # 用配置的 Provider 发一次极短请求");
     println!("  pet-agent piper-check           # 检查 Piper exe/model 配置");
+    println!(
+        "  pet-agent memory list|pending|accept <id>|reject <id>|delete <id>|export|backup|audit"
+    );
     println!("  pet-agent tts-test \"文本\"      # 用当前 TTS 配置合成并播放（不发往 AI）");
 }
 
@@ -125,6 +132,92 @@ fn run_chat(provider_override: Option<&str>) {
         handle_turn(&*provider, &cfg, &mut ctx, text);
     }
     log_line("pet-agent exited");
+}
+
+/// Memory DB 路径。
+fn memory_db_path() -> std::path::PathBuf {
+    let mut p = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    p.pop();
+    p.push("data");
+    p.push("memory.db");
+    p
+}
+
+/// Memory CLI。
+fn run_memory_cli(args: &[String]) {
+    let sub = args.get(2).map(|s| s.as_str()).unwrap_or("list");
+    let db = memory_db_path();
+    let mgr = match memory::MemoryManager::open(&db) {
+        Ok(m) => m,
+        Err(e) => {
+            println!("memory unavailable: {e}");
+            return;
+        }
+    };
+    match sub {
+        "list" => {
+            let all = mgr.list_active();
+            if all.is_empty() {
+                println!("(no active memories)");
+            }
+            for m in all {
+                println!(
+                    "#{} [{}]{} {}",
+                    m.id,
+                    m.kind,
+                    if m.pinned { " (pinned)" } else { "" },
+                    m.content
+                );
+            }
+        }
+        "pending" => {
+            let all = mgr.list_pending();
+            if all.is_empty() {
+                println!("(no pending)");
+            }
+            for p in all {
+                println!(
+                    "#{} [{}] {} (target={:?})",
+                    p.id, p.action, p.content, p.target_id
+                );
+            }
+        }
+        "accept" => {
+            if let Some(id) = args.get(3).and_then(|s| s.parse::<i64>().ok()) {
+                match mgr.accept(id) {
+                    Ok(_) => println!("accepted #{id}"),
+                    Err(e) => println!("error: {e}"),
+                }
+            }
+        }
+        "reject" => {
+            if let Some(id) = args.get(3).and_then(|s| s.parse::<i64>().ok()) {
+                match mgr.reject(id) {
+                    Ok(_) => println!("rejected #{id}"),
+                    Err(e) => println!("error: {e}"),
+                }
+            }
+        }
+        "delete" => {
+            if let Some(id) = args.get(3).and_then(|s| s.parse::<i64>().ok()) {
+                match mgr.soft_delete(id) {
+                    Ok(_) => println!("deleted #{id}"),
+                    Err(e) => println!("error: {e}"),
+                }
+            }
+        }
+        "export" => println!("{}", mgr.export_json()),
+        "backup" => match mgr.backup(&db) {
+            Ok(p) => println!("backup: {}", p.display()),
+            Err(e) => println!("error: {e}"),
+        },
+        "audit" => {
+            for (ts, action, mid, before, after) in mgr.audit_log(50) {
+                println!("{ts} {action} id={mid:?} before={before:?} after={after:?}");
+            }
+        }
+        _ => println!("unknown memory subcommand: {sub}"),
+    }
 }
 
 /// 检查 Piper 配置。

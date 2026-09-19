@@ -629,8 +629,102 @@ pet-agent  = 用户输入 / AI / Conversation / Provider
 
 ### 17.13 已知技术债（第八阶段）
 
-- UI 模式对话历史从简（仅 system + 当前 user；短上下文主要由 `chat` 模式维护）。
+- ~~UI 模式对话历史从简~~ → 第九阶段已修复（见 §18.1）。
 - 无流式 token 气泡；按完整回复处理。
 - 真实 OpenAI-compatible endpoint 未联调（本机无运行中的服务）。
 - Agent 托盘图标用系统默认图标。
 - 重启 agent 后 `pet-agent.config.json` 的 hotkey 字段尚未可配置（固定 Ctrl+Alt+Space）。
+
+---
+
+## 18. UI 多轮上下文 + TTS 输出层（第九阶段）
+
+### 18.1 UI 多轮上下文（修复）
+
+- UI 模式与 `chat` 模式共用同一 `context::Conversation`（system + 最近 `history_limit` 轮）。
+- 成功轮写入 user+assistant；失败/取消轮不写（`pending_user` + generation 校验）。
+- 「清空对话」`conv.clear()`（保留 system prompt）。
+- 实测：第 1 轮 `user=1 assistant=0`，第 2 轮 `user=2 assistant=1`，第 3 轮 `user=3 assistant=2`。
+
+### 18.2 TTS 架构（属于 pet-agent）
+
+```
+AI Worker → AssistantResponse → UI 协调
+    ├─ update history
+    ├─ ExpressionMapper → DesktopPet (Bubble/Motion)
+    └─ enqueue TTS → TTS Worker → Playback
+```
+
+- 模块：`pet-agent/src/tts/{mod,provider,playback,sanitize}.rs`。
+- 不进入 desktop-pet / Cubism shim / D3D / PresentationController。
+- DesktopPet 即使 TTS/agent 全关也独立运行。
+
+### 18.3 TtsProvider 抽象
+
+```rust
+trait TtsProvider { fn name(&self) -> &str; fn synthesize(&self, text: &str) -> Result<Vec<u8>, String>; }
+```
+
+- `NullTtsProvider`（不发声）、`MockTtsProvider`（生成静音 WAV，验证链路）。
+- 未知 provider 回退 mock，不崩溃。
+- 业务层无 `if provider == ...` 分支；未来 SAPI / Edge TTS / Piper / GPT-SoVITS 只需新增 impl。
+
+### 18.4 Audio Playback
+
+- `tts/playback.rs`：基于 Windows `winmm!PlaySoundW`（`SND_MEMORY|SND_ASYNC`）的最简封装。
+- 业务层只调 `play`/`stop`；`stop` 可真正停止当前播放。
+
+### 18.5 SpeechTextSanitizer
+
+- 去除代码块 / Markdown 前缀 / URL / JSON-样式行 / 控制信息；压缩空白；限制长度（默认朗读与气泡相同的短文本）。
+- 完整回复仍保留在 Conversation History。
+
+### 18.6 TTS Worker + Queue policy
+
+- 独立 worker 线程；有界「最新优先」槽（`Mutex<Option<Job>> + Condvar`，容量 1）。
+- 新请求覆盖未开始的旧请求并**打断当前播放**；不积压。
+- 空闲时 `Condvar.wait` 阻塞，无 busy loop。
+- 默认只对 **AI assistant response** 朗读（idle speech / 气泡默认不读）。
+
+### 18.7 Interrupt / cancellation
+
+- 触发停止：用户新消息 / 点「停止」/ 清空对话 / agent 退出 / TTS 关闭。
+- `generation` 判定旧结果丢弃；`playback::stop()` 真正停止播放。
+
+### 18.8 Config schema
+
+```json
+"tts": {
+  "enabled": false,
+  "provider": "mock",
+  "voice": null,
+  "rate": 1.0,
+  "volume": 1.0,
+  "speak_bubble_text_only": true
+}
+```
+
+- 全部有安全默认值；默认 **disabled**（避免升级后突然出声）；老配置可读；rate clamp [0.5,2.0]、volume clamp [0,1]。
+
+### 18.9 Tray / UI 控制
+
+- TTS 状态：Ready / Thinking… / Speaking… / TTS Error（短提示，不长期覆盖 Provider 错误）。
+- Tray「语音输出」开关（改 `tts.enabled` 并持久化）、「停止说话」。
+- 均在 agent 托盘，不在 DesktopPet 托盘。
+
+### 18.10 Lip Sync 未来接入点
+
+- 预留：playback 可暴露 playback_started / stopped / 近似振幅。
+- **本阶段不实现** Cubism 嘴型驱动。
+
+### 18.11 错误隔离
+
+- TTS 失败：AI 文本 / 气泡 / history 均正常；UI 不崩；详细错误只写日志。
+- 桌宠气泡不显示 HRESULT 等错误。
+
+### 18.12 已知技术债（第九阶段）
+
+- TTS Provider 仅 Null + Mock（真实本地语音 SAPI / Edge TTS 未接入）。
+- 无流式 TTS。
+- Lip Sync 未实现（预留接口）。
+- Mock TTS 生成静音，仅验证链路不验证音质。

@@ -13,6 +13,7 @@ mod mapper;
 mod provider;
 #[cfg(windows)]
 mod single_instance;
+mod tts;
 #[cfg(windows)]
 mod ui;
 mod worker;

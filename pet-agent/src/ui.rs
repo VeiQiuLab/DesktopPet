@@ -42,6 +42,7 @@ thread_local! {
 
 struct UiContext {
     worker: AiWorker,
+    #[allow(dead_code)]
     cfg: AgentConfig,
     generation: u64,
     active_gen: Option<u64>,
@@ -50,6 +51,12 @@ struct UiContext {
     tray_added: bool,
     last_reply: String,
     provider_name: String,
+    /// 短期多轮上下文（与 chat 模式同一套 Conversation）。
+    conv: crate::context::Conversation,
+    /// 待写入 history 的 (generation, user_text)。
+    pending_user: Option<(u64, String)>,
+    /// TTS 控制器。
+    tts: crate::tts::TtsController,
 }
 
 pub fn run_ui(provider_override: Option<&str>) {
@@ -129,6 +136,9 @@ pub fn run_ui(provider_override: Option<&str>) {
                 tray_added: false,
                 last_reply: String::new(),
                 provider_name: pname,
+                conv: crate::context::Conversation::new(&cfg),
+                pending_user: None,
+                tts: crate::tts::TtsController::new(&cfg),
             });
         });
 
@@ -362,10 +372,13 @@ unsafe fn submit_text(hwnd: HWND, text: &str) {
         ctx.active_gen = Some(gen);
         ctx.thinking = true;
 
-        let msgs = vec![crate::context::ChatMessage {
-            role: "system",
-            content: ctx.cfg.system_prompt.clone(),
-        }];
+        // 短期多轮：system + history + 本轮 user
+        let mut msgs = ctx.conv.messages();
+        msgs.push(crate::context::ChatMessage {
+            role: "user",
+            content: text.to_string(),
+        });
+        ctx.pending_user = Some((gen, text.to_string()));
         let req = AiRequest {
             generation: gen,
             messages: msgs,
@@ -428,6 +441,18 @@ unsafe fn poll_results(hwnd: HWND) {
             Ok(reply) => {
                 log_line(&format!("provider replied in {}ms", res.elapsed_ms));
                 set_status(hwnd, &format!("{pname} · Ready"));
+                // 写入短期 history（仅成功轮）
+                CTX.with(|c| {
+                    if let Some(ctx) = c.borrow_mut().as_mut() {
+                        if let Some((g, u)) = ctx.pending_user.clone() {
+                            if g == res.generation {
+                                ctx.conv.push_user(&u);
+                                ctx.conv.push_assistant(&reply);
+                                ctx.pending_user = None;
+                            }
+                        }
+                    }
+                });
                 // 发送到桌宠（截断 + 映射）
                 let bubble = truncate(&reply, 80);
                 let mapped = mapper::map(&bubble);
@@ -443,6 +468,13 @@ unsafe fn poll_results(hwnd: HWND) {
                         set_status(hwnd, &format!("{pname} · 桌宠当前未运行"));
                     }
                 }
+                // TTS：朗读与气泡相同的短文本（若启用）
+                let speech = crate::tts::sanitize::sanitize(&reply, mapped.text.len().max(1));
+                CTX.with(|c| {
+                    if let Some(ctx) = c.borrow_mut().as_mut() {
+                        ctx.tts.speak(&speech);
+                    }
+                });
             }
             Err(e) => {
                 log_line(&format!("provider error: {e}"));
@@ -468,6 +500,8 @@ unsafe fn cancel_current(hwnd: HWND) {
         if let Some(ctx) = c.borrow_mut().as_mut() {
             ctx.active_gen = None; // 结果回来时会被丢弃
             ctx.thinking = false;
+            ctx.pending_user = None;
+            ctx.tts.stop();
         }
     });
     toggle_send_button(hwnd, false);
@@ -476,9 +510,15 @@ unsafe fn cancel_current(hwnd: HWND) {
 }
 
 unsafe fn clear_conversation(hwnd: HWND) {
+    CTX.with(|c| {
+        if let Some(ctx) = c.borrow_mut().as_mut() {
+            ctx.conv.clear();
+            ctx.pending_user = None;
+            ctx.tts.stop();
+        }
+    });
     set_status(hwnd, &format!("{} · 对话已清空", provider_status_label()));
     log_line("conversation cleared (short-term only)");
-    let _ = hwnd;
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

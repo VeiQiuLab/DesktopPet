@@ -13,6 +13,7 @@ pub trait Provider {
 pub fn make(name: &str, cfg: &AgentConfig) -> Box<dyn Provider> {
     match name {
         "mock" => Box::new(MockProvider),
+        "context_mock" => Box::new(ContextMockProvider),
         "openai_compatible" => Box::new(OpenAiCompatibleProvider::new(cfg)),
         other => {
             eprintln!("[pet-agent] unknown provider '{other}', falling back to mock");
@@ -42,6 +43,24 @@ impl Provider for MockProvider {
             format!("（mock）我听到了：{t}")
         };
         Ok(reply)
+    }
+}
+
+/// 回显收到的消息数量与各角色，用于验证多轮上下文。
+pub struct ContextMockProvider;
+
+impl Provider for ContextMockProvider {
+    fn name(&self) -> &str {
+        "context_mock"
+    }
+    fn generate(&self, messages: &[ChatMessage], _user_text: &str) -> Result<String, String> {
+        let sys = messages.iter().filter(|m| m.role == "system").count();
+        let usr = messages.iter().filter(|m| m.role == "user").count();
+        let ast = messages.iter().filter(|m| m.role == "assistant").count();
+        Ok(format!(
+            "ctx: system={sys} user={usr} assistant={ast} total={}",
+            messages.len()
+        ))
     }
 }
 

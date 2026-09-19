@@ -58,6 +58,15 @@ pet-agent.exe ui      # 常驻：原生输入框 + 托盘 + 全局快捷键
 - AI 请求在 worker 线程，UI 不冻结；可「停止」取消（结果丢弃）。
 - Provider 离线不退出；显示 Offline/Error，详细错误写日志。
 
+## TTS 输出层（第九阶段）
+
+- 配置 `tts.enabled=true` 后，AI 回复会经 `sanitize → TtsProvider → Playback` 朗读。
+- 当前 Provider：`null`（不发声）、`mock`（生成静音 WAV，验证链路）。
+- 独立 TTS worker + 最新优先队列（可打断），不阻塞 UI / DesktopPet。
+- 「停止」/ 新消息 / 清空对话 / 退出都会停止当前语音。
+- TTS 失败不影响 AI 文本、气泡与 history。
+- 未来可替换为 SAPI / Edge TTS / Piper / GPT-SoVITS（仅需新增 `impl TtsProvider`）。
+
 ## 边界
 
 - 不接触 HWND / Cubism / D3D；不修改桌宠配置；不绕过 IPC。

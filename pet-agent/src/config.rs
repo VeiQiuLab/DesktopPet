@@ -31,6 +31,61 @@ pub struct AgentConfig {
     /// 是否在日志中记录完整对话（默认 false）。
     #[serde(default)]
     pub log_conversation: bool,
+    /// TTS 配置。
+    #[serde(default)]
+    pub tts: TtsConfig,
+}
+
+/// TTS 配置。默认 disabled，避免升级后突然出声。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_tts_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub voice: Option<String>,
+    #[serde(default = "default_rate")]
+    pub rate: f32,
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+    #[serde(default = "default_true")]
+    pub speak_bubble_text_only: bool,
+}
+
+fn default_tts_provider() -> String {
+    "mock".into()
+}
+fn default_rate() -> f32 {
+    1.0
+}
+fn default_volume() -> f32 {
+    1.0
+}
+fn default_true() -> bool {
+    true
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        TtsConfig {
+            enabled: false,
+            provider: default_tts_provider(),
+            voice: None,
+            rate: default_rate(),
+            volume: default_volume(),
+            speak_bubble_text_only: true,
+        }
+    }
+}
+
+impl TtsConfig {
+    /// 归一化（clamp rate/volume）。
+    pub fn normalized(mut self) -> Self {
+        self.rate = self.rate.clamp(0.5, 2.0);
+        self.volume = self.volume.clamp(0.0, 1.0);
+        self
+    }
 }
 
 fn default_provider() -> String {
@@ -61,6 +116,7 @@ impl Default for AgentConfig {
             history_limit: default_history_limit(),
             bubble_max_chars: default_bubble_max(),
             log_conversation: false,
+            tts: TtsConfig::default(),
         }
     }
 }

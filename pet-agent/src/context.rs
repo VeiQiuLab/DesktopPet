@@ -50,6 +50,17 @@ impl Conversation {
         out
     }
 
+    /// 清空短期 user/assistant 轮次（保留 system prompt）。
+    pub fn clear(&mut self) {
+        self.turns.clear();
+    }
+
+    /// 当前轮次数量（测试用）。
+    #[allow(dead_code)]
+    pub fn turn_count(&self) -> usize {
+        self.turns.len()
+    }
+
     fn trim(&mut self) {
         let max = self.history_limit * 2; // 每轮 user+assistant
         if self.turns.len() > max {

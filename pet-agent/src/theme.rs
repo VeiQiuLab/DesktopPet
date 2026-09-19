@@ -12,8 +12,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// 主题色（RGB）。
-pub const BG: (u8, u8, u8) = (30, 32, 38);
-pub const PANEL: (u8, u8, u8) = (40, 43, 50);
+pub const BG: (u8, u8, u8) = (26, 28, 33);
+pub const PANEL: (u8, u8, u8) = (26, 28, 33);
 pub const FG: (u8, u8, u8) = (230, 232, 236);
 #[allow(dead_code)]
 pub const ACCENT: (u8, u8, u8) = (90, 140, 240);

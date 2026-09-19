@@ -119,7 +119,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
-            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()), // 透明
+            hbrBackground: crate::theme::bg_brush(), // 深色胶囊底
             ..Default::default()
         };
         if RegisterClassExW(&wc) == 0 {
@@ -133,8 +133,8 @@ pub fn run_ui(provider_override: Option<&str>) {
             WS_POPUP,
             200,
             200,
-            380,
-            56,
+            428,
+            64,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -145,7 +145,14 @@ pub fn run_ui(provider_override: Option<&str>) {
         // 现代外观：大圆角 + 亚克力玻璃背景
         apply_modern_style(hwnd);
 
-        let _ = SetWindowPos(hwnd, None, 200, 200, 380, 56, SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(hwnd, None, 200, 200, 428, 64, SWP_NOZORDER | SWP_NOACTIVATE);
+        // 胶囊形窗口区域（圆角 = 高度一半）
+        {
+            use windows::Win32::Graphics::Gdi::CreateRoundRectRgn;
+            use windows::Win32::Graphics::Gdi::SetWindowRgn;
+            let rgn = CreateRoundRectRgn(0, 0, 429, 65, 64, 64);
+            let _ = SetWindowRgn(hwnd, Some(rgn), true);
+        }
         create_controls(hwnd);
         // 深色主题字体
         {
@@ -297,7 +304,7 @@ unsafe fn create_controls(hwnd: HWND) {
         windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
     let hinst = HINSTANCE(instance.0);
 
-    // EDIT（多行）
+    // 输入区（无边框单行/多行，与外层同底色 → 无「两层」观感）
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("EDIT"),
@@ -306,9 +313,9 @@ unsafe fn create_controls(hwnd: HWND) {
             | WS_VISIBLE
             | WS_TABSTOP
             | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN) as u32),
-        14,
-        12,
-        300,
+        26,
+        16,
+        352,
         32,
         Some(hwnd),
         Some(HMENU(ID_EDIT as isize as *mut _)),
@@ -316,16 +323,16 @@ unsafe fn create_controls(hwnd: HWND) {
         None,
     );
 
-    // 圆形发送键（右下角，owner-draw）
+    // 内嵌圆形发送键（胶囊右侧）
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
-        w!("↑"),
+        w!(""),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
-        326,
-        10,
-        36,
-        36,
+        378,
+        14,
+        40,
+        40,
         Some(hwnd),
         Some(HMENU(ID_SEND as isize as *mut _)),
         Some(hinst),
@@ -824,8 +831,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// 应用 Win11 现代外观：大圆角 + 亚克力玻璃背景。
 unsafe fn apply_modern_style(hwnd: HWND) {
     use windows::Win32::Graphics::Dwm::{
-        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW,
-        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     };
     use windows::Win32::UI::Controls::MARGINS;
     let round = DWMWCP_ROUND;
@@ -835,25 +841,16 @@ unsafe fn apply_modern_style(hwnd: HWND) {
         &round as *const _ as *const core::ffi::c_void,
         4,
     );
-    let backdrop = DWMSBT_TRANSIENTWINDOW; // 亚克力
-    let _ = DwmSetWindowAttribute(
-        hwnd,
-        DWMWA_SYSTEMBACKDROP_TYPE,
-        &backdrop as *const _ as *const core::ffi::c_void,
-        4,
-    );
-    // 让玻璃铺满客户区
-    let margins = MARGINS {
-        cxLeftWidth: -1,
-        cxRightWidth: -1,
-        cyTopHeight: -1,
-        cyBottomHeight: -1,
-    };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-    apply_acrylic(hwnd);
+    // 不设置 SYSTEMBACKDROP_TYPE（会覆盖自绘深色背景）
+    let _ = DWMSBT_TRANSIENTWINDOW;
+    // 不扩展 DWM 框架（避免与自绘背景冲突）
+    let _ = std::mem::size_of::<MARGINS>();
+    // 注：暂不启用亚克力，避免 EDIT 子控件与半透明玻璃产生「两层颜色」。
+    // 真液态玻璃（WindowsLiquidGlass / D3D11 自绘）将在后续集成。
 }
 
 /// 通过 SetWindowCompositionAttribute 应用亚克力（毛玻璃）。
+#[allow(dead_code)]
 unsafe fn apply_acrylic(hwnd: HWND) {
     #[repr(C)]
     struct AccentPolicy {
@@ -905,15 +902,29 @@ unsafe fn draw_send_button(lparam: LPARAM) {
     let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
     let hdc = dis.hDC;
     let r = dis.rcItem;
-    let bg = windows::Win32::Foundation::COLORREF(0x00c08050);
+    let bg = windows::Win32::Foundation::COLORREF(0x00F0_7030);
     let brush = CreateSolidBrush(bg);
     let old = SelectObject(hdc, HGDIOBJ(brush.0));
     let _ = Ellipse(hdc, r.left, r.top, r.right, r.bottom);
     let _ = SelectObject(hdc, old);
     let _ = DeleteObject(HGDIOBJ(brush.0));
-    let _ = SetBkMode(hdc, TRANSPARENT);
-    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x00FFFFFF));
-    let mut t: Vec<u16> = "↑".encode_utf16().collect();
+    use windows::Win32::Graphics::Gdi::{CreatePen, LineTo, MoveToEx, PS_SOLID};
+    let pen = CreatePen(
+        PS_SOLID,
+        3,
+        windows::Win32::Foundation::COLORREF(0x00FFFFFF),
+    );
+    let oldp = SelectObject(hdc, HGDIOBJ(pen.0));
+    let cx = (r.left + r.right) / 2;
+    let cy = (r.top + r.bottom) / 2;
+    let _ = MoveToEx(hdc, cx - 7, cy - 8, None);
+    let _ = LineTo(hdc, cx + 8, cy);
+    let _ = LineTo(hdc, cx - 7, cy + 8);
+    let _ = LineTo(hdc, cx - 7, cy - 8);
+    let _ = SelectObject(hdc, oldp);
+    let _ = DeleteObject(HGDIOBJ(pen.0));
+    let _ = (DrawTextW, SetBkMode, SetTextColor, TRANSPARENT);
+    let mut t: Vec<u16> = "".encode_utf16().collect();
     let mut rc = r;
     let _ = DrawTextW(
         hdc,

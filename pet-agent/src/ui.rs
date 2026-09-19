@@ -777,6 +777,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             poll_results(hwnd);
             LRESULT(0)
         }
+        // 无边框窗口：按住空白处可拖动
+        WM_LBUTTONDOWN => {
+            let _ = ReleaseCapture();
+            let _ = SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as usize)), Some(LPARAM(0)));
+            LRESULT(0)
+        }
         WM_DRAWITEM => {
             draw_send_button(lparam);
             LRESULT(1)

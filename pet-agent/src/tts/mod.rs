@@ -4,10 +4,12 @@
 //! 独立 worker + 有界「最新优先」队列；可停止；失败隔离。
 
 pub mod audio;
+pub mod piper;
 pub mod playback;
 pub mod provider;
 pub mod sanitize;
 pub mod sapi;
+pub mod temp;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

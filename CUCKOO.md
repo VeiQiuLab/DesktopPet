@@ -807,7 +807,85 @@ motion → look（仅 Idle）→ **mouth（说话期间最终权限）** → phy
 
 ### 19.11 已知技术债（第十阶段）
 
-- 本机 SAPI 引擎不可用（`0x80045003`），真实发声未在本机验证；架构与失败隔离已就绪。
-- `tts-voices` 目前仅返回 (default)（未展开全部 voice token 枚举）。
+- 本机 SAPI 引擎不可用（`0x80045003`），真实发声未在本机验证。
+- `tts-voices` 目前仅返回 (default)。
 - Lip sync 为 amplitude envelope（非 phoneme/viseme）。
 - 无流式 TTS。
+
+---
+
+## 20. Piper 本地 TTS Provider（第十一阶段）
+
+### 20.1 Provider 家族
+
+```
+TtsProvider
+├─ null   （不发声）
+├─ mock   （静音，验证链路）
+├─ sapi   （Windows 本地语音，本机引擎缺失）
+└─ piper  （调用外部 piper.exe + voice model）★ 新增
+```
+业务层无 provider-specific 分支；仅 `make(name)` 一处分发。
+
+### 20.2 Piper Provider
+
+- `tts/piper.rs`：调用**已存在**的 `piper.exe`。
+- 输入自然语言 → 输出统一 `AudioOutput`（不绕过 Playback）。
+- 链路：`Piper → WAV → AudioOutput → Envelope → Playback + LipSync`。
+
+### 20.3 Executable / model config
+
+```json
+"tts": {
+  "enabled": true, "provider": "piper", "timeout_secs": 30,
+  "piper": { "exe": "...piper.exe", "model": "...voice.onnx", "config": "...voice.onnx.json" }
+}
+```
+- 绝对路径；文件不存在 → 明确错误（`piper exe not found` / `piper model not found`）。
+- 不 panic、不静默 fallback 到 mock。
+
+### 20.4 Process invocation / security
+
+- 用 `std::process::Command` + 独立参数，**绝不 shell 拼接**。
+- 文本走 **stdin**（UTF-8），避免注入 / 引号 / 中文乱码 / 超长命令行。
+- 不自动下载、不改 PATH、不改系统环境、不装服务。
+
+### 20.5 timeout / process cleanup
+
+- `try_wait` 轮询 + 超时（默认 30s，可配）→ 超时 `kill + wait`。
+- 正常/失败/超时都回收 child；不产生僵尸进程。
+
+### 20.6 临时 WAV
+
+- 统一 `%TEMP%\DesktopPet\tts\`；唯一文件名（基于时间+计数，**不基于用户文本**）。
+- 用后即删；启动时清理 >1h 过期文件。
+
+### 20.7 AudioOutput 转换
+
+- 解析 WAV → `pcm_i16 / sample_rate / channels / bits_per_sample` → 删临时文件。
+
+### 20.8 Real PCM envelope
+
+- 与 SAPI 共用 `parse_wav`；envelope 用真实 PCM 计算（`tts-test` 输出 samples/max）。
+- mock（静音）max=0.000 属预期；真实语音 max 应非零。
+
+### 20.9 Lip sync 校准
+
+- `lip_sync.start_delay_ms` 可调（默认 0）；`tts-test` 会一次性发送 envelope。
+
+### 20.10 CLI
+
+- `pet-agent piper-check`：检查 exe / model / config 并做极短 synthesis（本机缺 exe/model → 明确列出）。
+- `pet-agent tts-test "文本"`：用当前 TTS 配置合成 + 播放 + 发 lip sync，不调用 LLM。
+
+### 20.11 Failure behavior
+
+- `provider=piper` 且 Piper 不可用：AI 文本 / 气泡正常，TTS 报错，**不播放 mock 静音**。
+- 显式配置才 fallback；第一版不做自动 fallback。
+
+### 20.12 已知技术债（第十一阶段）
+
+- **本机未安装 Piper 与 voice model**，真实发声 + 嘴型实机闭环**未完成**（代码/配置检查已就绪）。
+- `piper-check` 的极短 synthesis 需真实 exe 才能验证。
+- `tts-voices`（SAPI）仍仅 (default)。
+- Lip sync 为 amplitude envelope。

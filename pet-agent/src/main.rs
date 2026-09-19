@@ -58,6 +58,14 @@ fn main() {
         }
         "tts-voices" => run_tts_voices(),
         "envelope-test" => run_envelope_test(),
+        "piper-check" => run_piper_check(),
+        "tts-test" => {
+            let text = args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| "你好，这是桌宠语音测试。".into());
+            run_tts_test(&text);
+        }
         "provider-test" => run_provider_test(),
         "help" | "--help" | "-h" => print_help(),
         _ => {
@@ -77,6 +85,8 @@ fn print_help() {
     println!("  pet-agent ui [--provider ...]   # 常驻输入框 + 托盘 + 全局快捷键");
     println!("  pet-agent tts-voices            # 列出系统可用 SAPI voice");
     println!("  pet-agent provider-test         # 用配置的 Provider 发一次极短请求");
+    println!("  pet-agent piper-check           # 检查 Piper exe/model 配置");
+    println!("  pet-agent tts-test \"文本\"      # 用当前 TTS 配置合成并播放（不发往 AI）");
 }
 
 fn build_provider(cfg: &AgentConfig, override_name: Option<&str>) -> Box<dyn Provider> {
@@ -115,6 +125,67 @@ fn run_chat(provider_override: Option<&str>) {
         handle_turn(&*provider, &cfg, &mut ctx, text);
     }
     log_line("pet-agent exited");
+}
+
+/// 检查 Piper 配置。
+fn run_piper_check() {
+    let cfg = AgentConfig::load();
+    let p = tts::piper::PiperProvider::new(&cfg.tts.piper, cfg.tts.timeout_secs);
+    println!("piper check:");
+    for line in p.check() {
+        println!("  {line}");
+    }
+}
+
+/// 用当前 TTS 配置合成并播放（不发往 AI/DesktopPet 的 AI 链路，只测声音）。
+fn run_tts_test(text: &str) {
+    let cfg = AgentConfig::load();
+    let sanitized = tts::sanitize::sanitize(text, 200);
+    let provider = tts::provider::make(&cfg.tts.clone().normalized());
+    println!("provider: {}", provider.name());
+    let started = std::time::Instant::now();
+    match provider.synthesize(&sanitized) {
+        Ok(audio) => {
+            let ms = started.elapsed().as_millis();
+            println!("latency: {ms}ms");
+            println!(
+                "sample_rate={} channels={} bits={} duration={:.2}s",
+                audio.sample_rate,
+                audio.channels,
+                audio.bits_per_sample,
+                audio.duration_secs()
+            );
+            let env = tts::audio::envelope(
+                &audio,
+                cfg.lip_sync.sample_hz,
+                cfg.lip_sync.gain,
+                cfg.lip_sync.noise_floor,
+            );
+            let max = env.iter().cloned().fold(0.0f32, f32::max);
+            println!("envelope samples={} max={:.3}", env.len(), max);
+            // 发送 lip sync 给桌宠（若在线）
+            if cfg.lip_sync.enabled && !env.is_empty() {
+                let json = pet_protocol::build_lip_sync(
+                    cfg.lip_sync.sample_hz,
+                    &env,
+                    cfg.lip_sync.start_delay_ms,
+                );
+                let _ = ipc::send_raw_pub(&json);
+            }
+            // 播放
+            let wav = audio.to_wav();
+            tts::playback::play(&wav);
+            println!("playing... (audio duration {:.2}s)", audio.duration_secs());
+            std::thread::sleep(std::time::Duration::from_secs_f32(
+                audio.duration_secs().clamp(0.2, 30.0),
+            ));
+            tts::playback::stop();
+            println!("done");
+        }
+        Err(e) => {
+            println!("tts error: {e}");
+        }
+    }
 }
 
 /// 验证 envelope 算法（内部生成 tone，不播放）。

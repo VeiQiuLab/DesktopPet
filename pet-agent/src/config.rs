@@ -54,6 +54,8 @@ pub struct LipSyncConfig {
     pub attack: f32,
     #[serde(default = "default_release")]
     pub release: f32,
+    #[serde(default)]
+    pub start_delay_ms: u32,
 }
 
 fn default_sample_hz() -> f32 {
@@ -78,6 +80,7 @@ impl Default for LipSyncConfig {
             noise_floor: default_noise_floor(),
             attack: default_attack(),
             release: default_release(),
+            start_delay_ms: 0,
         }
     }
 }
@@ -97,6 +100,30 @@ pub struct TtsConfig {
     pub volume: f32,
     #[serde(default = "default_true")]
     pub speak_bubble_text_only: bool,
+    /// Piper 专用配置。
+    #[serde(default)]
+    pub piper: PiperConfig,
+    /// synthesis 超时（秒）。
+    #[serde(default = "default_tts_timeout")]
+    pub timeout_secs: u64,
+}
+
+/// Piper 本地 TTS 引擎配置。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PiperConfig {
+    /// piper.exe 绝对路径。
+    #[serde(default)]
+    pub exe: String,
+    /// voice 模型 .onnx 绝对路径。
+    #[serde(default)]
+    pub model: String,
+    /// voice 配置 .onnx.json 绝对路径（可选；缺省从 model 推导）。
+    #[serde(default)]
+    pub config: String,
+}
+
+fn default_tts_timeout() -> u64 {
+    30
 }
 
 fn default_tts_provider() -> String {
@@ -121,6 +148,8 @@ impl Default for TtsConfig {
             rate: default_rate(),
             volume: default_volume(),
             speak_bubble_text_only: true,
+            piper: PiperConfig::default(),
+            timeout_secs: default_tts_timeout(),
         }
     }
 }

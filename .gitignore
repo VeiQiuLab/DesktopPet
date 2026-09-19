@@ -23,6 +23,10 @@ cli_out.txt
 desktop-pet.config.json
 pet-agent.config.json
 
+# Piper voice 模型（体积大，不入库）
+/pet-agent/voices/*.onnx
+/pet-agent/voices/*.onnx.json
+
 # 临时启动脚本
 _launch_*.bat
 _l.bat

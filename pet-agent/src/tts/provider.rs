@@ -16,6 +16,7 @@ pub fn make(cfg: &TtsConfig) -> Box<dyn TtsProvider> {
         "null" => Box::new(NullTtsProvider),
         "mock" => Box::new(MockTtsProvider),
         "sapi" => Box::new(SapiTtsProvider::new(cfg)),
+        "piper" => Box::new(PiperTtsProvider::new(cfg)),
         // 第一版：未知 provider 回退 mock（不崩溃）
         _ => {
             crate::log_line(&format!(
@@ -36,6 +37,28 @@ impl TtsProvider for NullTtsProvider {
     }
     fn synthesize(&self, _text: &str) -> Result<crate::tts::audio::AudioOutput, String> {
         Ok(crate::tts::audio::AudioOutput::empty())
+    }
+}
+
+/// Piper 本地 TTS（调用外部 piper.exe）。
+pub struct PiperTtsProvider {
+    inner: crate::tts::piper::PiperProvider,
+}
+
+impl PiperTtsProvider {
+    pub fn new(cfg: &TtsConfig) -> Self {
+        PiperTtsProvider {
+            inner: crate::tts::piper::PiperProvider::new(&cfg.piper, cfg.timeout_secs),
+        }
+    }
+}
+
+impl TtsProvider for PiperTtsProvider {
+    fn name(&self) -> &str {
+        "piper"
+    }
+    fn synthesize(&self, text: &str) -> Result<crate::tts::audio::AudioOutput, String> {
+        self.inner.synthesize_impl(text)
     }
 }
 

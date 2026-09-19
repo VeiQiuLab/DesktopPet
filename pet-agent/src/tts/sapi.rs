@@ -31,14 +31,12 @@ impl SapiProvider {
 
 /// 临时目录。
 fn temp_dir() -> std::path::PathBuf {
-    let mut p = std::env::temp_dir();
-    p.push("DesktopPet");
-    let _ = std::fs::create_dir_all(&p);
-    p
+    crate::tts::temp::tts_dir()
 }
 
 /// 启动时清理过期临时文件（> 1 小时）。
 pub fn cleanup_temp() {
+    crate::tts::temp::cleanup();
     let dir = temp_dir();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         let now = std::time::SystemTime::now();
@@ -108,13 +106,7 @@ fn synthesize_impl(
         return Ok(AudioOutput::empty());
     }
 
-    let wav_path = temp_dir().join(format!(
-        "tts_{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
+    let wav_path = crate::tts::temp::unique_path("wav");
 
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);

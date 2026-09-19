@@ -63,7 +63,6 @@ impl Default for GlassStyle {
             dispersion: 0.7,
             darkening: 0.15,
             tint: (0.06, 0.06, 0.09, 0.70),
-            shadow: 0.0,
         }
     }
 }
@@ -118,3 +117,4 @@ pub fn resize(w: i32, h: i32) {
 pub fn ok() -> bool {
     unsafe { lg_ok() != 0 }
 }
+

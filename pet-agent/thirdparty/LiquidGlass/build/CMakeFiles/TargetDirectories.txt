@@ -1,3 +1,0 @@
-C:/AI/QwenGame/DesktopPet/pet-agent/thirdparty/LiquidGlass/build/CMakeFiles/liquid_glass_shim.dir
-C:/AI/QwenGame/DesktopPet/pet-agent/thirdparty/LiquidGlass/build/CMakeFiles/ALL_BUILD.dir
-C:/AI/QwenGame/DesktopPet/pet-agent/thirdparty/LiquidGlass/build/CMakeFiles/ZERO_CHECK.dir

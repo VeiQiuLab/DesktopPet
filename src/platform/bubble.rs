@@ -1,7 +1,7 @@
 //! 桌宠文字气泡：独立的 Win32 layered window。
 //!
 //! - 无边框、不进任务栏、鼠标穿透、不抢焦点
-//! - 半透明深色圆角背景 + 浅色文字（Microsoft YaHei UI）
+//! - 极轻的浅色半透明圆角背景 + 深色文字（Microsoft YaHei UI）
 //! - 自动换行、按文本计算尺寸、限制最大宽度
 //! - 用 UpdateLayeredWindow + 32 位 DIB 实现逐像素 alpha
 
@@ -19,12 +19,13 @@ use crate::config::log_error;
 
 const BUBBLE_CLASS: windows::core::PCWSTR = w!("DesktopPetBubble");
 const PADDING: i32 = 12;
-const CORNER_RADIUS: i32 = 10;
+const CORNER_RADIUS: i32 = 14;
 const MAX_WIDTH: i32 = 320;
 const FONT_PT: i32 = 12;
-const BG_A: u8 = 220;
-const BG_RGB: (u8, u8, u8) = (32, 34, 38);
-const FG_RGB: (u8, u8, u8) = (240, 240, 240);
+/// 极轻的浅色半透明（Apple 风格），无黑色矩形。
+const BG_A: u8 = 175;
+const BG_RGB: (u8, u8, u8) = (245, 246, 248);
+const FG_RGB: (u8, u8, u8) = (32, 34, 40);
 
 static REGISTER_ONCE: Once = Once::new();
 

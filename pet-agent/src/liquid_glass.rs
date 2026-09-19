@@ -51,18 +51,19 @@ pub struct GlassStyle {
 
 impl Default for GlassStyle {
     fn default() -> Self {
-        // 深色 Liquid Glass：强模糊、大圆角、克制色散、轻微暗化、暗酒红 tint
+        // Apple 式玻璃胶囊：中等模糊 + 极轻折射 + 极细边缘高光 + 中性极淡 tint。
+        // darkening=1.0（不暗化），tint 极淡 → 让玻璃保留桌面颜色。
         GlassStyle {
             shadow: 0.0,
             blur: 10.0,
-            radius: 26.0,
-            saturation: 1.25,
-            refraction: 0.12,
+            radius: 25.0,
+            saturation: 1.05,
+            refraction: 0.03,
             refraction_negative: 0.0,
-            refraction_height: 0.18,
-            dispersion: 0.7,
-            darkening: 0.15,
-            tint: (0.06, 0.06, 0.09, 0.70),
+            refraction_height: 0.10,
+            dispersion: 0.05,
+            darkening: 0.98,
+            tint: (0.55, 0.55, 0.62, 0.02),
         }
     }
 }

@@ -45,6 +45,5 @@ _cli.bat
 _ui.bat
 _ollama.bat
 
-# 截图（调试用）
-screenshot*.png
-shot_*.png
+# 截图（调试用，全部不入库）
+/*.png

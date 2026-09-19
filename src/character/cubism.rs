@@ -41,6 +41,13 @@ extern "C" {
     fn cubism_shim_model_is_busy(handle: *mut c_void) -> c_int;
     fn cubism_shim_model_set_mouth_param(handle: *mut c_void, name: *const c_char);
     fn cubism_shim_model_set_mouth_open(handle: *mut c_void, value: c_float);
+    fn cubism_shim_model_get_visible_bounds(
+        handle: *mut c_void,
+        out_l: *mut c_float,
+        out_t: *mut c_float,
+        out_r: *mut c_float,
+        out_b: *mut c_float,
+    ) -> c_int;
 }
 
 /// 原始句柄直接命中测试（供窗口 wndproc 使用，避免借用 CubismModel）。
@@ -105,6 +112,26 @@ impl CubismModel {
 
     pub fn draw(&self, width: f32, height: f32) {
         unsafe { cubism_shim_model_draw(self.handle, width, height) }
+    }
+
+    /// 模型可见几何包围盒（窗口像素，左上原点，Y 向下）。
+    /// 返回 None 表示该帧还没有可用的 bounds。
+    pub fn visible_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        let (mut l, mut t, mut r, mut b) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let ok = unsafe {
+            cubism_shim_model_get_visible_bounds(
+                self.handle,
+                &mut l,
+                &mut t,
+                &mut r,
+                &mut b,
+            )
+        };
+        if ok != 0 {
+            Some((l, t, r, b))
+        } else {
+            None
+        }
     }
 
     /// 原始句柄（供窗口层 wndproc 做命中测试，不介入生命周期管理）。

@@ -101,7 +101,12 @@ struct Renderer::Impl {
     void SetVP(){D3D11_VIEWPORT vp={0,0,(float)width,(float)height,0,1};ctx->RSSetViewports(1,&vp);}
 
     void ApplyBg(){
+        // backbuffer 保持全透明 → 让 DWM 与真实桌面合成（真·玻璃）。
+        // 捕获的桌面背景只写入 bgRT 供 blur/refraction 使用。
+        float zero[4]={0,0,0,0};
         ctx->OMSetRenderTargets(1,backbuffer.rtv.GetAddressOf(),nullptr);
+        ctx->ClearRenderTargetView(backbuffer.rtv.Get(),zero);
+        ctx->OMSetRenderTargets(1,bgRT.rtv.GetAddressOf(),nullptr);
         if(bgImg){
             ImageCB cb={(float)bgImgW,(float)bgImgH,(float)width,(float)height};
             ctx->UpdateSubresource(cbImg.Get(),0,nullptr,&cb,0,0);
@@ -109,14 +114,10 @@ struct Renderer::Impl {
             ctx->PSSetShader(img.Get(),nullptr,0);
             ctx->PSSetShaderResources(0,1,bgImg.GetAddressOf());
             SetVP();DrawFS();
-            ctx->OMSetRenderTargets(1,bgRT.rtv.GetAddressOf(),nullptr);
-            DrawFS();
             if(lastBgMode!=1){LG_LOG("ApplyBg SWITCH to IMAGE %dx%d",bgImgW,bgImgH);lastBgMode=1;}
         }else{
             float r=hasBgCol?bgCol[0]:1, g=hasBgCol?bgCol[1]:1, b=hasBgCol?bgCol[2]:1;
             float c[4]={r,g,b,1};
-            ctx->ClearRenderTargetView(backbuffer.rtv.Get(),c);
-            ctx->OMSetRenderTargets(1,bgRT.rtv.GetAddressOf(),nullptr);
             ctx->ClearRenderTargetView(bgRT.rtv.Get(),c);
             if(lastBgMode!=0){LG_LOG("ApplyBg SWITCH to COLOR (%.2f,%.2f,%.2f)",r,g,b);lastBgMode=0;}
         }

@@ -225,6 +225,8 @@ impl App {
                     if let Some(m) = &model {
                         m.update(dt);
                         m.draw(win_w as f32, win_h as f32);
+                        // 可见几何包围盒（窗口客户区像素）→ IPC 快照（供 agent 锚定输入栏）
+                        ipc_status.set_visible_bounds(m.visible_bounds());
                     }
                     let _ = gfx.present();
 

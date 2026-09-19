@@ -27,6 +27,12 @@ use crate::{autostart, log_line, single_instance};
 const ID_EDIT: i32 = 1001;
 const ID_SEND: i32 = 1002;
 const ID_STATUS: i32 = 1003;
+
+/// 输入栏窗口尺寸（可见胶囊 = 整个窗口）。
+const BAR_W: i32 = 428;
+const BAR_H: i32 = 50;
+/// 角色可见底部与输入栏顶部的间距。
+const GAP_PET: i32 = 8;
 const HOTKEY_ID: i32 = 1;
 const TRAY_CALLBACK: u32 = WM_APP + 10;
 
@@ -143,8 +149,8 @@ pub fn run_ui(provider_override: Option<&str>) {
             WS_POPUP | WS_CLIPCHILDREN,
             200,
             200,
-            428,
-            52,
+            BAR_W,
+            BAR_H,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -153,7 +159,7 @@ pub fn run_ui(provider_override: Option<&str>) {
         .unwrap_or_default();
 
         // LiquidGlass：真·液态玻璃（D3D11 模糊 + 折射 + 色散 + 边缘高光）
-        let lg_ok = crate::liquid_glass::init(hwnd.0 as *mut core::ffi::c_void, 428, 52);
+        let lg_ok = crate::liquid_glass::init(hwnd.0 as *mut core::ffi::c_void, BAR_W, BAR_H);
         if lg_ok {
             let style = crate::liquid_glass::GlassStyle::default();
             crate::liquid_glass::config(&style);
@@ -163,35 +169,30 @@ pub fn run_ui(provider_override: Option<&str>) {
             apply_modern_style(hwnd);
         }
 
-        let _ = SetWindowPos(hwnd, None, 200, 200, 428, 52, SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(hwnd, None, 200, 200, BAR_W, BAR_H, SWP_NOZORDER | SWP_NOACTIVATE);
         // 胶囊裁剪：圆角外不显示
         {
             use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
-            let rgn = CreateRoundRectRgn(0, 0, 429, 53, 52, 52);
+            let rgn = CreateRoundRectRgn(0, 0, BAR_W + 1, BAR_H + 1, BAR_H, BAR_H);
             let _ = SetWindowRgn(hwnd, Some(rgn), true);
         }
-        // 圆角交由 DWM（DWMWCP_ROUND）处理，不用 SetWindowRgn（会裁掉毛玻璃）
-        create_controls(hwnd);
+        // 创建字体（控件布局需要 font metrics）
+        let font = {
+            let dpi = {
+                let d = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd);
+                if d == 0 { 96 } else { d }
+            };
+            crate::theme::create_font(dpi, 12)
+        };
+        create_controls(hwnd, font);
+        for id in [ID_EDIT, ID_SEND] {
+            if let Ok(c) = GetDlgItem(Some(hwnd), id) {
+                crate::theme::apply_font(c, font);
+            }
+        }
         // 窗口定位后再捕获桌面背景（供玻璃折射）
         if crate::liquid_glass::ok() {
             crate::liquid_glass::capture_behind(hwnd.0 as *mut core::ffi::c_void, 40);
-        }
-        // 深色主题字体
-        {
-            let dpi = {
-                let d = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd);
-                if d == 0 {
-                    96
-                } else {
-                    d
-                }
-            };
-            let font = crate::theme::create_font(dpi, 12);
-            for id in [ID_EDIT, ID_SEND, ID_STATUS] {
-                if let Ok(c) = GetDlgItem(Some(hwnd), id) {
-                    crate::theme::apply_font(c, font);
-                }
-            }
         }
 
         CTX.with(|c| {
@@ -224,9 +225,19 @@ pub fn run_ui(provider_override: Option<&str>) {
         // 轮询 worker 结果的定时器（每 100ms）
         let _ = SetTimer(Some(hwnd), POLL_TIMER_ID, 100, None);
 
-        // 初始显示
+        // 初始显示 + 首次锚定
         let _ = ShowWindow(hwnd, SW_SHOW);
         position_near_pet(hwnd);
+        // 定位完成后再捕获桌面背景（供玻璃折射真实桌面）
+        let mut last_capture_pos: Option<(i32, i32)> = None;
+        let mut last_capture_at: Option<std::time::Instant> = None;
+        if crate::liquid_glass::ok() {
+            crate::liquid_glass::capture_behind(hwnd.0 as *mut core::ffi::c_void, 40);
+            let mut r = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(hwnd, &mut r).is_ok() {
+                last_capture_pos = Some((r.left, r.top));
+            }
+        }
 
         // 每帧渲染 LiquidGlass
         if crate::liquid_glass::ok() {
@@ -244,8 +255,38 @@ pub fn run_ui(provider_override: Option<&str>) {
                 }
                 // 每帧跟随桌宠（正下方 + 居中 + 隐藏同步）
                 position_near_pet(hwnd);
+                // 位置变化 → 重新捕获背景（节流 300ms，避免高频闪动）
+                if crate::liquid_glass::ok() {
+                    let mut wr = windows::Win32::Foundation::RECT::default();
+                    if GetWindowRect(hwnd, &mut wr).is_ok() {
+                        let cur = (wr.left, wr.top);
+                        let need = match last_capture_pos {
+                            Some(p) => p != cur,
+                            None => true,
+                        };
+                        let due = match last_capture_at {
+                            Some(t) => t.elapsed().as_millis() >= 300,
+                            None => true,
+                        };
+                        if need && due {
+                            crate::liquid_glass::capture_behind(
+                                hwnd.0 as *mut core::ffi::c_void,
+                                40,
+                            );
+                            last_capture_pos = Some(cur);
+                            last_capture_at = Some(std::time::Instant::now());
+                        }
+                    }
+                }
                 // 整窗玻璃（内缩 1px 留边）
-                crate::liquid_glass::render_frame(428, 52, 1.0, 1.0, 426.0, 50.0);
+                crate::liquid_glass::render_frame(
+                    BAR_W,
+                    BAR_H,
+                    1.0,
+                    1.0,
+                    (BAR_W - 2) as f32,
+                    (BAR_H - 2) as f32,
+                );
                 // D3D Present 会覆盖子控件 → 每帧强制重绘 EDIT / 发送键
                 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
                 if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT) {
@@ -354,12 +395,44 @@ fn provider_status_label() -> String {
     })
 }
 
-unsafe fn create_controls(hwnd: HWND) {
+unsafe fn create_controls(hwnd: HWND, font: windows::Win32::Graphics::Gdi::HGDIOBJ) {
+    use windows::Win32::Graphics::Gdi::{
+        GetDC, GetTextMetricsW, ReleaseDC, SelectObject, TEXTMETRICW,
+    };
     let instance =
         windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
     let hinst = HINSTANCE(instance.0);
 
-    // 输入区（无边框单行/多行，与外层同底色 → 无「两层」观感）
+    // 字体 metrics → 一行文本高度，用于 EDIT 高度与垂直居中（不写魔法数字）
+    let mut line_h = 20i32;
+    {
+        let hdc = GetDC(Some(hwnd));
+        if !hdc.is_invalid() {
+            let old = SelectObject(hdc, font);
+            let mut tm = TEXTMETRICW::default();
+            if GetTextMetricsW(hdc, &mut tm).as_bool() {
+                line_h = tm.tmHeight.max(12);
+            }
+            SelectObject(hdc, old);
+            let _ = ReleaseDC(Some(hwnd), hdc);
+        }
+    }
+
+    // 左内边距
+    const LEFT_PAD: i32 = 20;
+    // 发送键：直径 32，右 inset 8，垂直居中
+    const BTN_D: i32 = 32;
+    const BTN_INSET_R: i32 = 8;
+    const GAP_EDIT_BTN: i32 = 8;
+
+    // EDIT：高度 = 一行文本高度 → 文本自然居中于控件；控件再垂直居中于胶囊
+    let edit_h = line_h;
+    let edit_y = (BAR_H - edit_h) / 2;
+    let btn_x = BAR_W - BTN_INSET_R - BTN_D;
+    let btn_y = (BAR_H - BTN_D) / 2;
+    let edit_w = (btn_x - GAP_EDIT_BTN) - LEFT_PAD;
+
+    // 输入区（多行，高度=一行）。用同色浅灰实底形成"输入槽"。
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("EDIT"),
@@ -368,33 +441,31 @@ unsafe fn create_controls(hwnd: HWND) {
             | WS_VISIBLE
             | WS_TABSTOP
             | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN) as u32),
-        24,
-        10,
-        352,
-        32,
+        LEFT_PAD,
+        edit_y,
+        edit_w,
+        edit_h,
         Some(hwnd),
         Some(HMENU(ID_EDIT as isize as *mut _)),
         Some(hinst),
         None,
     );
 
-    // 内嵌圆形发送键（胶囊右侧）
+    // 内嵌圆形发送键（胶囊右侧，垂直居中）
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
-        382,
-        12,
-        28,
-        28,
+        btn_x,
+        btn_y,
+        BTN_D,
+        BTN_D,
         Some(hwnd),
         Some(HMENU(ID_SEND as isize as *mut _)),
         Some(hinst),
         None,
     );
-
-    // 结构极简：只有一条输入栏 + 一个发送按钮，无其他控件
 }
 
 unsafe fn setup_hotkey(hwnd: HWND) {
@@ -466,13 +537,19 @@ unsafe fn toggle_send_button(hwnd: HWND, thinking: bool) {
     let _ = SetWindowTextW(ctrl, PCWSTR(wide.as_ptr()));
 }
 
+// 缓存最近一次成功查询到的可见包围盒（屏幕坐标 [l,t,r,b]）。
+// IPC 查询有开销，节流到 100ms；可见性/窗口用轻量 Win32 查询。
+thread_local! {
+    static LAST_BOUNDS: RefCell<Option<(std::time::Instant, [i32; 4])>> = RefCell::new(None);
+}
+
 unsafe fn position_near_pet(hwnd: HWND) {
-    // 桌宠窗口矩形（纯 Win32，不走 IPC）
-    const W: i32 = 428;
-    const H: i32 = 52;
-    const GAP: i32 = 10;
+    const W: i32 = BAR_W;
+    const H: i32 = BAR_H;
+
     let pet = FindWindowW(w!("DesktopPetWindow"), None).unwrap_or_default();
     if pet.0.is_null() {
+        // 桌宠不存在：输入栏停在鼠标处
         let mut pt = windows::Win32::Foundation::POINT::default();
         let _ = GetCursorPos(&mut pt);
         let _ = SetWindowPos(
@@ -491,13 +568,39 @@ unsafe fn position_near_pet(hwnd: HWND) {
         let _ = ShowWindow(hwnd, SW_HIDE);
         return;
     }
-    let mut r = windows::Win32::Foundation::RECT::default();
-    if GetWindowRect(pet, &mut r).is_err() {
-        return;
+
+    // 节流 IPC 查询（100ms）
+    let now = std::time::Instant::now();
+    let fresh = LAST_BOUNDS.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|(t, _)| now.duration_since(*t).as_millis() < 100)
+            .unwrap_or(false)
+    });
+    if !fresh {
+        if let Some(s) = ipc::query_status() {
+            // 优先用模型可见包围盒（屏幕坐标）；否则回退到窗口矩形
+            let bounds = s.visible_rect.unwrap_or(s.window_rect);
+            LAST_BOUNDS.with(|c| *c.borrow_mut() = Some((now, bounds)));
+        }
     }
-    // 角色正下方 + 水平居中
-    let x = r.left + (r.right - r.left) / 2 - W / 2;
-    let y = r.bottom + GAP;
+
+    let bounds = LAST_BOUNDS.with(|c| c.borrow().as_ref().map(|(_, b)| *b));
+    let [l, _t, r, b] = match bounds {
+        Some(b) => b,
+        None => {
+            // 尚未取得 bounds：退回窗口矩形
+            let mut wr = windows::Win32::Foundation::RECT::default();
+            if GetWindowRect(pet, &mut wr).is_err() {
+                return;
+            }
+            [wr.left, wr.top, wr.right, wr.bottom]
+        }
+    };
+
+    // 水平居中于可见角色；顶部 = 可见底部 + GAP
+    let x = l + (r - l) / 2 - W / 2;
+    let y = b + GAP_PET;
     let _ = SetWindowPos(
         hwnd,
         Some(HWND_TOPMOST),
@@ -971,17 +1074,19 @@ unsafe fn draw_send_button(lparam: LPARAM) {
     let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
     let hdc = dis.hDC;
     let r = dis.rcItem;
-    // 中性浅灰（克制，不抢戏）
-    let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00E8_E8E8));
+    // Apple 风格：暗中性圆 + 白箭头
+    // COLORREF 为 0x00BBGGRR
+    let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x0039_3A3E));
     let old = SelectObject(hdc, HGDIOBJ(brush.0));
     let _ = Ellipse(hdc, r.left, r.top, r.right, r.bottom);
     let _ = SelectObject(hdc, old);
     let _ = DeleteObject(HGDIOBJ(brush.0));
     let _ = SetBkMode(hdc, TRANSPARENT);
-    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x0030_3030));
+    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x00FF_FFFF));
     // 用三角形字符代替自绘线（避免 GDI 异常）
     let mut t: Vec<u16> = "➤".encode_utf16().collect();
     let mut rc = r;
+    // DT_CENTER | DT_VCENTER | DT_SINGLELINE = 0x1 | 0x4 | 0x20 = 0x25
     let _ = DrawTextW(
         hdc,
         &mut t,

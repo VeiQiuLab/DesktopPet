@@ -128,6 +128,9 @@ pub struct StatusSnapshot {
     pub visible: bool,
     pub window_rect: [i32; 4],
     pub active_character: String,
+    /// 模型可见几何包围盒（屏幕坐标 [l,t,r,b]）。None = 尚未渲染过。
+    #[serde(default)]
+    pub visible_rect: Option<[i32; 4]>,
 }
 
 #[derive(Debug, Deserialize)]

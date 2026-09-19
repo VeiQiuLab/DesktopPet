@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cstdio>
 #include <vector>
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
 
 using namespace LiquidGlass;
 
@@ -42,7 +44,8 @@ void lg_config(float blur, float radius, float saturation, float refr,
         .RefractionHeight(refr_h).Dispersion(dispersion).Darkening(darkening)
         .GlassTint(tint_r, tint_g, tint_b, tint_a)
         .Depth(true)
-        .HighlightAlpha(0.0f);
+        .ShadowAlpha(0.0f)       // 无阴影
+        .HighlightAlpha(0.0f);   // 无高光
 }
 
 void lg_set_background(float r, float g, float b) {
@@ -93,23 +96,31 @@ static bool SaveRegionBmp(int x, int y, int w, int h, const wchar_t* path) {
 }
 
 // 捕获 hwnd 所在屏幕区域（含边距），设为玻璃背景。
+// 为避免截到自己：临时隐藏窗口，等 DWM 合成一帧后再截，然后显示回来。
 void lg_capture_behind(void* hwnd, int pad) {
     if (!g_glass || !hwnd) return;
     HWND h = (HWND)hwnd;
     RECT r;
     if (!GetWindowRect(h, &r)) return;
-    int x = r.left - pad, y = r.top - pad;
-    int w = (r.right - r.left) + pad * 2;
-    int h2 = (r.bottom - r.top) + pad * 2;
+    const int w = (r.right - r.left) + pad * 2;
+    const int h2 = (r.bottom - r.top) + pad * 2;
 
-    // 临时隐藏自身窗口，避免截到自己
+    // 隐藏自己（不移动、不改位置），flush 一帧让屏幕出现真实背景
     ShowWindow(h, SW_HIDE);
-    Sleep(40);
+    DwmFlush();
+    Sleep(50);
+
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
     wcscat_s(tmp, L"DesktopPet_lg_bg.bmp");
+    const int x = r.left - pad;
+    const int y = r.top - pad;
     bool ok = SaveRegionBmp(x, y, w, h2, tmp);
+
+    // 恢复显示，位置不动
     ShowWindow(h, SW_SHOWNOACTIVATE);
+    DwmFlush();
+
     if (ok) g_glass->LoadBackgroundImage(tmp);
 }
 

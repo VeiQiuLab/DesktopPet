@@ -122,7 +122,8 @@ float4 main(float4 svpos : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
     c.rgb = lerp(float3(lum,lum,lum), c.rgb, saturation);
     c.rgb = saturate(c.rgb * darkening);
     c.rgb = lerp(c.rgb, glassTint.rgb, glassTint.a); // tint: blend toward tint color
-    c.a *= edgeAA;
+    // 真·半透明：内区透明度由 refractionHeight 之外的固定值决定（0.55）
+    c.a = 0.55 * edgeAA;
     return c;
 }
 )";
@@ -176,7 +177,7 @@ float4 main(float4 svpos : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
     color.rgb = lerp(float3(lum,lum,lum), color.rgb, saturation);
     color.rgb = saturate(color.rgb * darkening);
     color.rgb = lerp(color.rgb, glassTint.rgb, glassTint.a); // tint
-    color.a *= edgeAA;
+    color.a = 0.55 * edgeAA;
     return color;
 }
 )";

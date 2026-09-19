@@ -15,7 +15,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 pub const BG: (u8, u8, u8) = (26, 28, 33);
 #[allow(dead_code)]
 pub const PANEL: (u8, u8, u8) = (26, 28, 33);
-pub const FG: (u8, u8, u8) = (230, 232, 236);
+/// 前景文字色：深色玻璃 → 用浅灰字。
+pub const FG: (u8, u8, u8) = (228, 231, 236);
 #[allow(dead_code)]
 pub const ACCENT: (u8, u8, u8) = (90, 140, 240);
 
@@ -23,8 +24,8 @@ fn rgb(c: (u8, u8, u8)) -> COLORREF {
     COLORREF((c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16))
 }
 
-/// EDIT 背景色（与 LiquidGlass 深色玻璃一致）
-pub const GLASS_EDIT_BG: (u8, u8, u8) = (24, 24, 30);
+/// EDIT 背景色：暗中性灰，与外层深色玻璃融为一体（视觉上单层胶囊）。
+pub const GLASS_EDIT_BG: (u8, u8, u8) = (52, 55, 62);
 
 static mut BG_BRUSH: isize = 0;
 static mut EDIT_BRUSH: isize = 0;
@@ -82,8 +83,10 @@ pub unsafe fn on_ctlcolor(_hwnd: HWND, msg: u32, wparam: WPARAM) -> LRESULT {
             LRESULT(bg_brush().0 as isize)
         }
         WM_CTLCOLOREDIT => {
-            // 与玻璃同色的深色底（EDIT 不支持真透明，用同色伪装成一层）
+            // 用同色浅灰实底画刷（EDIT 的原生绘制逻辑仍会填充实底）。
+            // 颜色接近玻璃平均色 → 视觉上是一个"淡淡的输入槽"，符合 iOS 风格。
             let _ = SetTextColor(hdc, rgb(FG));
+            let _ = SetBkMode(hdc, windows::Win32::Graphics::Gdi::OPAQUE);
             let _ = SetBkColor(hdc, rgb(GLASS_EDIT_BG));
             LRESULT(edit_brush().0 as isize)
         }

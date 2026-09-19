@@ -1938,3 +1938,51 @@ Memory 跨 Persona 共用。
 - `piper-check` 的极短 synthesis 需真实 exe 才能验证。
 - `tts-voices`（SAPI）仍仅 (default)。
 - Lip sync 为 amplitude envelope。
+
+---
+
+## 23. 第十五阶段：Liquid Glass 输入栏 + 布局锚定 + 轻量气泡
+
+### 23.1 目标
+
+本轮只做 UI 布局与材质，不动架构 / AI / Memory / Persona。
+
+- 角色与输入栏间距 → 8px（基于**可见模型底边**，非窗口矩形）。
+- 输入文字按字体 metrics 垂直居中，左内边距 20px。
+- 发送按钮 32px，右 inset 8px，垂直居中。
+- 输入栏材质升级为真正的 D3D11 磨砂玻璃（Apple 风格）。
+- 说话气泡废弃“黑色矩形墙”，改为极轻的浅色半透明胶囊。
+
+### 23.2 角色可见包围盒（关键）
+
+- shim 新增 cubism_shim_model_get_visible_bounds：每帧从 MVP + 各 drawable 顶点算出模型可见几何在窗口客户区的包围盒（像素，左上原点，Y 向下）。
+- SharedStatus 新增 visible_rect，IPC StatusSnapshot 新增同名字段（屏幕坐标）。
+- pet-agent 每 100ms 经 IPC 查询一次，锚定输入栏：input_top = visible_bottom + 8，input_center_x = visible_center_x。查询失败回退到窗口矩形。
+
+### 23.3 Liquid Glass 材质
+
+- 复用 pet-agent/thirdparty/LiquidGlass（D3D11 + HLSL）。
+- 关键修改（LiquidGlass.cpp）：
+  - ApplyBg 不再把捕获的桌面背景画到 backbuffer；backbuffer 全透明 → 让 DWM 与真实桌面合成，得到真·半透明玻璃；捕获的背景只写入内部 bgRT 供 blur/refraction 使用。
+  - Glass shader 输出 alpha = 0.55 * edgeAA（原为沿用捕获背景的 alpha=1）。
+  - 阴影与高光关闭。
+- 参数（liquid_glass.rs）：blur=10, radius=25, saturation=1.05, refraction=0.03, refraction_height=0.10, dispersion=0.05, darkening=0.98, tint=(0.55,0.55,0.62,0.02)。
+- 背景捕获：lg_capture_behind 用隐藏窗口 + DwmFlush 方式；位置变化时节流 300ms 重捕获。
+
+### 23.4 输入栏结构
+
+- 窗口 428x50，WS_POPUP | WS_CLIPCHILDREN，圆角通过 SetWindowRgn 裁成胶囊。
+- 一个 EDIT（左 padding 20，高度 = 字体一行 metrics → 自然居中）。
+- 一个自绘圆形发送按钮（暗底 0x39,3A,3E + 白箭头，垂直居中，右 inset 8）。
+- EDIT 背景深灰（52,55,62）与玻璃融合为单层观感；FG 改浅灰（228,231,236）。
+
+### 23.5 说话气泡
+
+- bubble.rs：BG_RGB 由 (32,34,38) 深色改为 (245,246,248) 极浅色，alpha=175，圆角 14；文字色 (32,34,40)。形成“极轻透明玻璃小气泡”，不再是黑墙。
+
+### 23.6 已知技术债（第十五阶段）
+
+- EDIT 原生控件不支持真透明，用同色实底伪装；玻璃透不上来是视觉妥协。
+- 玻璃参数属“可调”，后续如需要更接近参考图可再调 tint/darkening。
+- 背景捕获为软件 BitBlt（GDI），高帧率时未做完整 DXGI Desktop Duplication。
+

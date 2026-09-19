@@ -12,6 +12,7 @@ mod autostart;
 mod config;
 mod context;
 mod ipc;
+mod liquid_glass;
 mod mapper;
 mod memory;
 #[cfg(windows)]

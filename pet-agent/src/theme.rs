@@ -6,8 +6,8 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, GetStockObject, SetBkMode, SetTextColor, DEFAULT_GUI_FONT,
-    HBRUSH, HGDIOBJ, HOLLOW_BRUSH, TRANSPARENT,
+    CreateSolidBrush, DeleteObject, GetStockObject, SetBkColor, SetBkMode, SetTextColor,
+    DEFAULT_GUI_FONT, HBRUSH, HGDIOBJ, TRANSPARENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -23,7 +23,19 @@ fn rgb(c: (u8, u8, u8)) -> COLORREF {
     COLORREF((c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16))
 }
 
+/// EDIT 背景色（与 LiquidGlass 深色玻璃一致）
+pub const GLASS_EDIT_BG: (u8, u8, u8) = (24, 24, 30);
+
 static mut BG_BRUSH: isize = 0;
+static mut EDIT_BRUSH: isize = 0;
+
+/// EDIT 专用画刷（深色玻璃同色）。
+pub unsafe fn edit_brush() -> HBRUSH {
+    if EDIT_BRUSH == 0 {
+        EDIT_BRUSH = CreateSolidBrush(rgb(GLASS_EDIT_BG)).0 as isize;
+    }
+    HBRUSH(EDIT_BRUSH as *mut _)
+}
 
 /// 惰性创建背景画刷。
 pub unsafe fn bg_brush() -> HBRUSH {
@@ -70,10 +82,10 @@ pub unsafe fn on_ctlcolor(_hwnd: HWND, msg: u32, wparam: WPARAM) -> LRESULT {
             LRESULT(bg_brush().0 as isize)
         }
         WM_CTLCOLOREDIT => {
-            // 透明背景：让亚克力毛玻璃透出
+            // 与玻璃同色的深色底（EDIT 不支持真透明，用同色伪装成一层）
             let _ = SetTextColor(hdc, rgb(FG));
-            let _ = SetBkMode(hdc, TRANSPARENT);
-            LRESULT(GetStockObject(HOLLOW_BRUSH).0 as isize)
+            let _ = SetBkColor(hdc, rgb(GLASS_EDIT_BG));
+            LRESULT(edit_brush().0 as isize)
         }
         _ => LRESULT(0),
     }

@@ -140,7 +140,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class,
             w!("DesktopPet Agent"),
-            WS_POPUP,
+            WS_POPUP | WS_CLIPCHILDREN,
             200,
             200,
             428,
@@ -152,12 +152,24 @@ pub fn run_ui(provider_override: Option<&str>) {
         )
         .unwrap_or_default();
 
-        // 现代外观：大圆角 + 亚克力玻璃背景
-        apply_modern_style(hwnd);
+        // LiquidGlass：真·液态玻璃（D3D11 模糊 + 折射 + 色散 + 边缘高光）
+        let lg_ok = crate::liquid_glass::init(hwnd.0 as *mut core::ffi::c_void, 428, 52);
+        if lg_ok {
+            let style = crate::liquid_glass::GlassStyle::default();
+            crate::liquid_glass::config(&style);
+            crate::log_line("LiquidGlass initialized");
+        } else {
+            crate::log_line("LiquidGlass init FAILED, falling back to DWM");
+            apply_modern_style(hwnd);
+        }
 
         let _ = SetWindowPos(hwnd, None, 200, 200, 428, 52, SWP_NOZORDER | SWP_NOACTIVATE);
         // 圆角交由 DWM（DWMWCP_ROUND）处理，不用 SetWindowRgn（会裁掉毛玻璃）
         create_controls(hwnd);
+        // 窗口定位后再捕获桌面背景（供玻璃折射）
+        if crate::liquid_glass::ok() {
+            crate::liquid_glass::capture_behind(hwnd.0 as *mut core::ffi::c_void, 40);
+        }
         // 深色主题字体
         {
             let dpi = {
@@ -210,14 +222,45 @@ pub fn run_ui(provider_override: Option<&str>) {
         let _ = ShowWindow(hwnd, SW_SHOW);
         position_near_pet(hwnd);
 
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&mut msg);
+        // 每帧渲染 LiquidGlass
+        if crate::liquid_glass::ok() {
+            let mut msg = MSG::default();
+            loop {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    if msg.message == WM_QUIT {
+                        break;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&mut msg);
+                }
+                if msg.message == WM_QUIT {
+                    break;
+                }
+                // 整窗玻璃（内缩 1px 留边）
+                crate::liquid_glass::render_frame(428, 52, 1.0, 1.0, 426.0, 50.0);
+                // D3D Present 会覆盖子控件 → 每帧强制重绘 EDIT / 发送键
+                use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
+                if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT) {
+                    let _ = InvalidateRect(Some(edit), None, false);
+                    let _ = UpdateWindow(edit);
+                }
+                if let Ok(send) = GetDlgItem(Some(hwnd), ID_SEND) {
+                    let _ = InvalidateRect(Some(send), None, false);
+                    let _ = UpdateWindow(send);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+        } else {
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&mut msg);
+            }
         }
 
         remove_tray(hwnd);
         let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID);
+        crate::liquid_glass::shutdown();
         log_line("ui loop exited");
     }
 }

@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\AI\QwenGame\DesktopPet\pet-agent\thirdparty\LiquidGlass\liquid_glass_shim.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\AI\QwenGame\DesktopPet\pet-agent\thirdparty\LiquidGlass\LiquidGlass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\AI\QwenGame\DesktopPet\pet-agent\thirdparty\LiquidGlass\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{6CAA8A01-C62B-36FF-AEC5-1DF62BB78B4E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

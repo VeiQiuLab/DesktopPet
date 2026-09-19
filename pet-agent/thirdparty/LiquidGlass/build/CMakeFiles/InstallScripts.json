@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/AI/QwenGame/DesktopPet/pet-agent/thirdparty/LiquidGlass/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

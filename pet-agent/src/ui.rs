@@ -72,27 +72,36 @@ struct UiContext {
 fn spawn_parent_guard() {
     let pid = crate::PARENT_PID.load(std::sync::atomic::Ordering::Relaxed);
     if pid == 0 {
+        crate::log_line("parent guard: no parent pid, not guarding");
         return;
     }
     std::thread::Builder::new()
         .name("parent-guard".into())
-        .spawn(move || unsafe {
-            use windows::Win32::Foundation::CloseHandle;
+        .spawn(move || {
+            use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
             use windows::Win32::System::Threading::{
-                OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+                OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
             };
-            let h = match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-                Ok(h) => h,
-                Err(_) => return,
-            };
-            // 阻塞直到父进程退出（含被强杀）
-            let _ = WaitForSingleObject(h, INFINITE);
-            let _ = CloseHandle(h);
-            crate::log_line("parent process exited, shutting down agent");
-            single_instance::broadcast_quit();
-            // 兜底：若广播未生效（例如窗口未创建），直接退出
-            std::thread::sleep(std::time::Duration::from_millis(1500));
-            std::process::exit(0);
+            crate::log_line(&format!("parent guard watching pid={pid}"));
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let h = match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+                    Ok(h) => h,
+                    Err(_) => {
+                        crate::log_line("parent process gone (open failed), exiting agent");
+                        std::process::exit(0);
+                    }
+                };
+                let rc = unsafe { WaitForSingleObject(h, 0) };
+                let _ = unsafe { CloseHandle(h) };
+                if rc == WAIT_OBJECT_0 {
+                    crate::log_line("parent process exited, exiting agent");
+                    std::process::exit(0);
+                } else if rc != WAIT_TIMEOUT {
+                    crate::log_line(&format!("parent guard wait odd rc={rc:?}, exiting agent"));
+                    std::process::exit(0);
+                }
+            }
         })
         .ok();
 }
@@ -102,6 +111,7 @@ pub fn run_ui(provider_override: Option<&str>) {
     std::panic::set_hook(Box::new(|info| {
         crate::log_line(&format!("PANIC: {info}"));
     }));
+    crate::log_line("run_ui: start");
     let cfg = AgentConfig::load();
     crate::config::set_lip_sync_enabled(cfg.lip_sync.enabled);
     spawn_parent_guard();
@@ -901,29 +911,15 @@ unsafe fn draw_send_button(lparam: LPARAM) {
     let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
     let hdc = dis.hDC;
     let r = dis.rcItem;
-    let bg = windows::Win32::Foundation::COLORREF(0x00F0_7030);
-    let brush = CreateSolidBrush(bg);
+    let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00F0_7030));
     let old = SelectObject(hdc, HGDIOBJ(brush.0));
     let _ = Ellipse(hdc, r.left, r.top, r.right, r.bottom);
     let _ = SelectObject(hdc, old);
     let _ = DeleteObject(HGDIOBJ(brush.0));
-    use windows::Win32::Graphics::Gdi::{CreatePen, LineTo, MoveToEx, PS_SOLID};
-    let pen = CreatePen(
-        PS_SOLID,
-        3,
-        windows::Win32::Foundation::COLORREF(0x00FFFFFF),
-    );
-    let oldp = SelectObject(hdc, HGDIOBJ(pen.0));
-    let cx = (r.left + r.right) / 2;
-    let cy = (r.top + r.bottom) / 2;
-    let _ = MoveToEx(hdc, cx - 7, cy - 8, None);
-    let _ = LineTo(hdc, cx + 8, cy);
-    let _ = LineTo(hdc, cx - 7, cy + 8);
-    let _ = LineTo(hdc, cx - 7, cy - 8);
-    let _ = SelectObject(hdc, oldp);
-    let _ = DeleteObject(HGDIOBJ(pen.0));
-    let _ = (DrawTextW, SetBkMode, SetTextColor, TRANSPARENT);
-    let mut t: Vec<u16> = "".encode_utf16().collect();
+    let _ = SetBkMode(hdc, TRANSPARENT);
+    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x00FFFFFF));
+    // 用三角形字符代替自绘线（避免 GDI 异常）
+    let mut t: Vec<u16> = "➤".encode_utf16().collect();
     let mut rc = r;
     let _ = DrawTextW(
         hdc,

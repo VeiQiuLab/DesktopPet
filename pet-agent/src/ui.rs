@@ -33,6 +33,9 @@ const BAR_W: i32 = 428;
 const BAR_H: i32 = 50;
 /// 角色可见底部与输入栏顶部的间距。
 const GAP_PET: i32 = 8;
+/// shim 报告的几何包围盒基于 drawable 顶点，通常比真实可见像素底边低约 16px
+/// （顶点含边缘透明区域）。这里补偿，使视觉间距真正接近 GAP_PET。
+const BOTTOM_VERTEX_PAD: i32 = 16;
 const HOTKEY_ID: i32 = 1;
 const TRAY_CALLBACK: u32 = WM_APP + 10;
 
@@ -600,7 +603,7 @@ unsafe fn position_near_pet(hwnd: HWND) {
 
     // 水平居中于可见角色；顶部 = 可见底部 + GAP
     let x = l + (r - l) / 2 - W / 2;
-    let y = b + GAP_PET;
+    let y = b - BOTTOM_VERTEX_PAD + GAP_PET;
     let _ = SetWindowPos(
         hwnd,
         Some(HWND_TOPMOST),

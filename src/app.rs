@@ -367,12 +367,12 @@ impl App {
             };
             match req {
                 ValidatedRequest::Expression(e) => {
-                    let priority = e.priority.to_presentation();
+                    let priority = crate::ipc::protocol::priority_to_presentation(e.priority);
                     let duration_s = e.duration_ms.map(|ms| ms as f32 / 1000.0);
                     let expr = match (e.text, e.motion) {
                         (Some(text), Some(m)) => PetExpression::TextAndMotion {
                             text,
-                            action: m.to_action(),
+                            action: crate::ipc::protocol::motion_to_action(m),
                             priority,
                             duration: duration_s,
                         },
@@ -382,7 +382,7 @@ impl App {
                             duration: duration_s,
                         },
                         (None, Some(m)) => PetExpression::Motion {
-                            action: m.to_action(),
+                            action: crate::ipc::protocol::motion_to_action(m),
                             priority,
                         },
                         (None, None) => continue,

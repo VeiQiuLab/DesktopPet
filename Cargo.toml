@@ -25,10 +25,12 @@ windows = { version = "0.62", features = [
     "Win32_System_Console",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_UI_Shell",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+pet-protocol = { path = "pet-protocol" }
 
 [profile.release]
 opt-level = 3

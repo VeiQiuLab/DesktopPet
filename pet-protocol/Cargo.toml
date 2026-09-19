@@ -1,0 +1,9 @@
+[package]
+name = "pet-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Shared wire protocol for DesktopPet <-> pet-agent (no platform deps)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

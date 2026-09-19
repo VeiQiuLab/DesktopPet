@@ -22,14 +22,57 @@ use windows::Win32::System::Pipes::{
 
 use crate::config::{log_debug, log_error};
 
-/// 管道路径（版本化）。
-pub const PIPE_NAME: &str = r"\\.\pipe\DesktopPetExpression_v1";
+/// 管道路径（版本化，来自共享协议 crate）。
+pub const PIPE_NAME: &str = pet_protocol::PIPE_NAME;
 
 /// 队列容量（主线程与 IPC worker 之间的有界通道）。
 pub const QUEUE_CAPACITY: usize = 32;
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// SDDL：只允许 Owner（当前用户）+ Local System 完全访问。
+/// 避免默认 ACL 可能授予 Everyone 读权限。
+const PIPE_SDDL: &str = "D:P(A;;GA;;;OW)(A;;GA;;;SY)";
+
+/// 构建 Named Pipe 的 SECURITY_ATTRIBUTES（限制到当前用户 + SYSTEM）。
+///
+/// 返回 (SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR 句柄)。调用方用完需
+/// 通过 `free_security_descriptor` 释放描述符。
+unsafe fn build_pipe_security() -> Option<(
+    windows::Win32::Security::SECURITY_ATTRIBUTES,
+    windows::Win32::Security::PSECURITY_DESCRIPTOR,
+)> {
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+
+    let sddl = wide(PIPE_SDDL);
+    let mut psd = PSECURITY_DESCRIPTOR::default();
+    let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        PCWSTR(sddl.as_ptr()),
+        SDDL_REVISION_1,
+        &mut psd,
+        None,
+    );
+    if ok.is_err() || psd.is_invalid() {
+        return None;
+    }
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: psd.0,
+        bInheritHandle: windows::core::BOOL(0),
+    };
+    Some((sa, psd))
+}
+
+unsafe fn free_security_descriptor(psd: windows::Win32::Security::PSECURITY_DESCRIPTOR) {
+    if !psd.is_invalid() {
+        use windows::Win32::Foundation::{LocalFree, HLOCAL};
+        let _ = LocalFree(Some(HLOCAL(psd.0)));
+    }
 }
 
 /// IPC 服务端句柄。Drop 时停止 worker。
@@ -73,6 +116,11 @@ fn worker_loop(tx: SyncSender<crate::ipc::protocol::ValidatedRequest>, stop: Arc
                 break;
             }
             let name = wide(PIPE_NAME);
+            // 限制 ACL 到当前用户 + SYSTEM
+            let (sa_opt, psd_opt) = match build_pipe_security() {
+                Some((sa, psd)) => (Some(sa), Some(psd)),
+                None => (None, None),
+            };
             let handle = CreateNamedPipeW(
                 PCWSTR(name.as_ptr()),
                 PIPE_ACCESS_DUPLEX,
@@ -81,8 +129,11 @@ fn worker_loop(tx: SyncSender<crate::ipc::protocol::ValidatedRequest>, stop: Arc
                 64 * 1024,
                 64 * 1024,
                 0,
-                None,
+                sa_opt.as_ref().map(|sa| sa as *const _),
             );
+            if let Some(psd) = psd_opt {
+                free_security_descriptor(psd);
+            }
             if handle == windows::Win32::Foundation::INVALID_HANDLE_VALUE {
                 log_error("CreateNamedPipeW failed");
                 std::thread::sleep(std::time::Duration::from_millis(500));

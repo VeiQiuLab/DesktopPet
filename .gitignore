@@ -1,10 +1,12 @@
 # Rust 构建产物
 /target/
+/pet-protocol/target/
+/pet-agent/target/
 
 # C++ shim 构建目录
 /shim/build/
 
-# Cubism SDK（大型 vendored 依赖）
+# Cubism SDK
 /vendor/
 
 # 调试符号
@@ -14,10 +16,12 @@
 *.log
 run*.log
 pet_runtime.log
+pet-agent.log
 cli_out.txt
 
 # 用户本地配置
 desktop-pet.config.json
+pet-agent.config.json
 
 # 临时启动脚本
 _launch_*.bat

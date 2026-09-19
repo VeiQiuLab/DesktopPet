@@ -467,8 +467,84 @@ IPC 收到 Expression → `process_ipc` → `PresentationController::present(Pet
 
 ### 15.13 已知技术债（第六阶段）
 
-- Named Pipe ACL 未显式限制到当前用户 SID。
+- ~~Named Pipe ACL 未显式限制到当前用户 SID~~ → 第七阶段已修复（见 §16.9）。
 - 无认证 / 无请求签名（本机同用户场景，风险低）。
 - 无 streaming / 增量气泡（按完整表达处理）。
 - CLI 参数解析较简单（未用 clap）。
 - `source` 字段协议中预留但内部未使用。
+
+---
+
+## 16. AI Bridge（第七阶段）
+
+### 16.1 架构原则
+
+**LLM / Provider 逻辑不进入 desktop-pet.exe。** DesktopPet Runtime 保持
+模型无关、AI Provider 无关、网络无关、可独立运行；AI Bridge 崩溃不影响桌宠。
+
+### 16.2 目录结构
+
+```
+DesktopPet/
+├── src/                 # desktop-pet Runtime（不变）
+├── pet-protocol/        # 共享 wire protocol（只依赖 serde）
+└── pet-agent/           # AI Bridge（独立 exe）
+```
+
+采用**并列 crate**（最小改动），未强行迁移既有 Runtime 到 workspace。
+
+### 16.3 共享协议 pet-protocol
+
+- 只依赖 serde；不含 Win32 / D3D / Cubism / Presentation。
+- 定义 Request / Response / Motion / Priority / 校验 / 常量 / PIPE_NAME。
+- desktop-pet 的 `src/ipc/protocol.rs` 变为适配层，把共享中间表示转为内部
+  `PetAction` / `presentation::Priority`。
+
+### 16.4 pet-agent
+
+独立 exe：`user text → Provider → AssistantResponse → ExpressionMapper → Named Pipe → DesktopPet`。
+不接触 HWND / Cubism / D3D，不修改桌宠配置，不绕过 IPC。
+
+- Provider trait：`generate(messages, user_text) -> Result<String, String>`
+- MockProvider：用于闭环验证
+- OpenAiCompatibleProvider：面向任意 OpenAI-compatible endpoint（本地/云），
+  base_url / model / api_key 全部由配置提供，不写死厂商。
+
+### 16.5 ExpressionMapper（保守规则）
+
+普通回复 → Text；明确疑问语气（以 ？/? 结尾且短）→ 可选 Nod；极少量明确模式 → Shake；
+无法确定 → Text only。**LLM 原始输出绝不直接决定 motion / command / duration / priority**。
+
+### 16.6 Conversation
+
+短上下文：system prompt + 最近 `history_limit`（默认 12）轮。无 Memory / RAG /
+Embedding / 总结 / 遗忘。
+
+### 16.7 失败隔离
+
+- DesktopPet 未运行：pet-agent 仍能对话，IPC 失败打印提示，不崩溃；下条消息可重试。
+- Provider 失败（连接拒绝 / 超时 / 4xx / 5xx / malformed / empty）：不 panic，
+  错误写 console/log，可选向桌宠发 "……"。
+- 超时：`timeout_secs`（默认 60）。
+- 桌宠崩溃不会导致 agent 永久卡住。
+
+### 16.8 日志
+
+- `pet-agent.log`（agent）与 `pet_runtime.log`（runtime）分开。
+- 默认不记录对话内容（`log_conversation=false`）。
+
+### 16.9 Named Pipe ACL（第七阶段修复）
+
+- 使用 SDDL `D:P(A;;GA;;;OW)(A;;GA;;;SY)`：仅 Owner（当前用户）+ Local System 完全访问。
+- 通过 `ConvertStringSecurityDescriptorToSecurityDescriptorW` 构造，传给 `CreateNamedPipeW`。
+- 实测 pet-agent 仍可连接；不再给 Everyone 广泛权限。
+
+### 16.10 生命周期
+
+DesktopPet 与 pet-agent 完全独立进程：任一方启动 / 退出 / 崩溃都不影响另一方长期运行。
+
+### 16.11 未来接入点
+
+- Memory / Persona：在 pet-agent 的 Conversation 层扩展（本阶段明确不做）。
+- 更多 Provider：新增 `impl Provider` 即可。
+- 用户输入 UI：未来可给桌宠加原生输入框，通过同一 IPC 提交。

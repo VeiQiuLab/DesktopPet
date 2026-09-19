@@ -315,9 +315,4 @@ impl CharacterPackage {
     pub fn speech(&self) -> &SpeechMeta {
         &self.meta.speech
     }
-
-    /// 嘴型参数 ID。
-    pub fn mouth_param(&self) -> &str {
-        &self.meta.parameters.mouth_open
-    }
 }

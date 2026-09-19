@@ -39,15 +39,6 @@ extern "C" {
     ) -> c_int;
     fn cubism_shim_model_set_look(handle: *mut c_void, x: c_float, y: c_float);
     fn cubism_shim_model_is_busy(handle: *mut c_void) -> c_int;
-    fn cubism_shim_model_set_mouth_param(handle: *mut c_void, name: *const c_char);
-    fn cubism_shim_model_set_mouth_open(handle: *mut c_void, value: c_float);
-    fn cubism_shim_model_get_visible_bounds(
-        handle: *mut c_void,
-        out_l: *mut c_float,
-        out_t: *mut c_float,
-        out_r: *mut c_float,
-        out_b: *mut c_float,
-    ) -> c_int;
 }
 
 /// 原始句柄直接命中测试（供窗口 wndproc 使用，避免借用 CubismModel）。
@@ -114,26 +105,6 @@ impl CubismModel {
         unsafe { cubism_shim_model_draw(self.handle, width, height) }
     }
 
-    /// 模型可见几何包围盒（窗口像素，左上原点，Y 向下）。
-    /// 返回 None 表示该帧还没有可用的 bounds。
-    pub fn visible_bounds(&self) -> Option<(f32, f32, f32, f32)> {
-        let (mut l, mut t, mut r, mut b) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-        let ok = unsafe {
-            cubism_shim_model_get_visible_bounds(
-                self.handle,
-                &mut l,
-                &mut t,
-                &mut r,
-                &mut b,
-            )
-        };
-        if ok != 0 {
-            Some((l, t, r, b))
-        } else {
-            None
-        }
-    }
-
     /// 原始句柄（供窗口层 wndproc 做命中测试，不介入生命周期管理）。
     pub fn raw_handle(&self) -> *mut c_void {
         self.handle
@@ -147,18 +118,6 @@ impl CubismModel {
     /// 是否有非 Idle 动作正在播放（priority > 1）。
     pub fn is_busy(&self) -> bool {
         unsafe { cubism_shim_model_is_busy(self.handle) != 0 }
-    }
-
-    /// 设置嘴型参数 ID（语义映射）。
-    pub fn set_mouth_param(&self, name: &str) {
-        if let Ok(c) = CString::new(name) {
-            unsafe { cubism_shim_model_set_mouth_param(self.handle, c.as_ptr()) }
-        }
-    }
-
-    /// 设置嘴型开合（0..1）。
-    pub fn set_mouth_open(&self, v: f32) {
-        unsafe { cubism_shim_model_set_mouth_open(self.handle, v) }
     }
 
     /// 播放动作。返回 true 表示成功。优先级：1=Idle, 2=Normal, 3=Force。

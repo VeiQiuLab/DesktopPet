@@ -15,8 +15,6 @@ use crate::behavior::{BehaviorController, PetAction, PetEvent, TickContext};
 use crate::character::cubism::CubismModel;
 use crate::character::{CharacterManager, CharacterPackage};
 use crate::config::{log_line, Config};
-use crate::ipc::protocol::{ValidatedCommand, ValidatedRequest};
-use crate::ipc::server::IpcServer;
 use crate::platform::gfx::Gfx;
 use crate::platform::window::{
     create_window, is_dragging, is_menu_open, set_active_character, set_model, WindowParams,
@@ -84,17 +82,12 @@ impl App {
             let mut model: Option<CubismModel> = None;
             let mut behavior: Option<BehaviorController> = None;
             let mut presentation: Option<PresentationController> = None;
-            let mut lipsync: Option<crate::presentation::lipsync::LipSyncController> = None;
 
             if let Some(pkg) = manager.resolve_active(&resolved_id) {
                 let idle = pkg.idle_behavior().clone();
                 model = Self::init_model(&gfx, pkg, win_w, win_h);
                 behavior = Some(BehaviorController::new(idle));
                 presentation = Some(PresentationController::new(pkg));
-                if let Some(m) = &model {
-                    m.set_mouth_param(pkg.mouth_param());
-                }
-                lipsync = Some(crate::presentation::lipsync::LipSyncController::new());
             } else {
                 log_line("no character available");
             }
@@ -105,10 +98,6 @@ impl App {
             if let Some(p) = presentation.as_mut() {
                 p.greet();
             }
-
-            // 启动 IPC server（Named Pipe）
-            let (ipc_server, ipc_rx, ipc_status) = IpcServer::start();
-            log_line("ipc server started");
 
             let mut last = Instant::now();
             let mut msg = MSG::default();
@@ -128,14 +117,6 @@ impl App {
                 last = now;
 
                 let visible = IsWindowVisible(hwnd).as_bool();
-                // 更新供 IPC 只读查询的状态快照
-                {
-                    let mut rc = RECT::default();
-                    let _ = GetWindowRect(hwnd, &mut rc);
-                    ipc_status.set_visible(visible);
-                    ipc_status.set_rect(rc.left, rc.top, rc.right, rc.bottom);
-                    ipc_status.set_active_character(&self.config.character.active_character);
-                }
 
                 // 处理事件（角色切换 / 行为 / 气泡反馈）
                 self.process_events(
@@ -145,24 +126,6 @@ impl App {
                     &mut model,
                     &mut behavior,
                     &mut presentation,
-                    win_w,
-                    win_h,
-                    &mut quit,
-                );
-                if quit {
-                    break 'running;
-                }
-
-                // 处理 IPC 请求
-                self.process_ipc(
-                    hwnd,
-                    &gfx,
-                    &manager,
-                    &mut model,
-                    &mut behavior,
-                    &mut presentation,
-                    &mut lipsync,
-                    &ipc_rx,
                     win_w,
                     win_h,
                     &mut quit,
@@ -210,14 +173,6 @@ impl App {
                         } else {
                             m.set_look(0.0, 0.0);
                         }
-                        // 嘴型同步（轻量 amplitude lookup）
-                        if let Some(ls) = lipsync.as_mut() {
-                            let mouth = ls.tick(dt);
-                            m.set_mouth_open(mouth);
-                            if mouth > 0.05 {
-                                crate::config::log_debug(&format!("mouth open v={mouth:.3}"));
-                            }
-                        }
                     }
 
                     gfx.bind_render_target(win_w, win_h);
@@ -225,8 +180,6 @@ impl App {
                     if let Some(m) = &model {
                         m.update(dt);
                         m.draw(win_w as f32, win_h as f32);
-                        // 可见几何包围盒（窗口客户区像素）→ IPC 快照（供 agent 锚定输入栏）
-                        ipc_status.set_visible_bounds(m.visible_bounds());
                     }
                     let _ = gfx.present();
 
@@ -239,9 +192,6 @@ impl App {
                     Self::sleep_remaining(now, HIDDEN_FRAME_MS);
                 }
             }
-
-            // 停止 IPC（Drop 会 join worker）
-            drop(ipc_server);
 
             // 统一退出流程：销毁窗口 → 触发 WM_DESTROY（保存配置、移除托盘）
             let _ = DestroyWindow(hwnd);
@@ -366,117 +316,6 @@ impl App {
             }
         }
         let _ = quit;
-    }
-
-    /// 处理 IPC 请求（worker 线程校验后经有界 channel 送达）。
-    #[allow(clippy::too_many_arguments)]
-    unsafe fn process_ipc(
-        &mut self,
-        hwnd: HWND,
-        gfx: &Gfx,
-        manager: &CharacterManager,
-        model: &mut Option<CubismModel>,
-        behavior: &mut Option<BehaviorController>,
-        presentation: &mut Option<PresentationController>,
-        lipsync: &mut Option<crate::presentation::lipsync::LipSyncController>,
-        ipc_rx: &Receiver<ValidatedRequest>,
-        win_w: i32,
-        win_h: i32,
-        quit: &mut bool,
-    ) {
-        const MAX_PER_FRAME: usize = 8;
-        for _ in 0..MAX_PER_FRAME {
-            let req = match ipc_rx.try_recv() {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-            match req {
-                ValidatedRequest::Expression(e) => {
-                    let priority = crate::ipc::protocol::priority_to_presentation(e.priority);
-                    let duration_s = e.duration_ms.map(|ms| ms as f32 / 1000.0);
-                    let expr = match (e.text, e.motion) {
-                        (Some(text), Some(m)) => PetExpression::TextAndMotion {
-                            text,
-                            action: crate::ipc::protocol::motion_to_action(m),
-                            priority,
-                            duration: duration_s,
-                        },
-                        (Some(text), None) => PetExpression::Text {
-                            text,
-                            priority,
-                            duration: duration_s,
-                        },
-                        (None, Some(m)) => PetExpression::Motion {
-                            action: crate::ipc::protocol::motion_to_action(m),
-                            priority,
-                        },
-                        (None, None) => continue,
-                    };
-                    if let Some(p) = presentation.as_mut() {
-                        if let Some(action) = p.present(expr) {
-                            if let Some(m) = model.as_ref() {
-                                let active_id = self.config.character.active_character.clone();
-                                Self::apply_motion(m, action, manager, &active_id);
-                            }
-                        }
-                    }
-                }
-                ValidatedRequest::Query { .. } => {
-                    // query 已在 IPC worker 内直接应答，这里不会到达
-                }
-                ValidatedRequest::LipSync {
-                    sample_hz,
-                    samples,
-                    start_delay_ms,
-                } => {
-                    crate::config::log_debug(&format!(
-                        "lipsync received: {} samples @ {}Hz",
-                        samples.len(),
-                        sample_hz
-                    ));
-                    if let Some(ls) = lipsync.as_mut() {
-                        ls.set_envelope(sample_hz, samples, start_delay_ms);
-                    }
-                }
-                ValidatedRequest::Command { command, .. } => match command {
-                    ValidatedCommand::Show => {
-                        crate::platform::window::show_window(hwnd);
-                    }
-                    ValidatedCommand::Hide => {
-                        crate::platform::window::hide_window(hwnd);
-                    }
-                    ValidatedCommand::ResetPosition => Self::reset_position(),
-                    ValidatedCommand::DismissBubble => {
-                        if let Some(p) = presentation.as_mut() {
-                            p.hide();
-                        }
-                    }
-                    ValidatedCommand::Character(id) => {
-                        Self::switch_character(
-                            hwnd,
-                            gfx,
-                            manager,
-                            model,
-                            behavior,
-                            presentation,
-                            win_w,
-                            win_h,
-                            &id,
-                            &mut self.config,
-                        );
-                    }
-                },
-            }
-        }
-        let _ = quit;
-    }
-
-    /// 供未来 AI / 外部源提交表达。当前未接线到主循环输入，仅作为公开接口预留。
-    #[allow(dead_code)]
-    pub fn submit_expression(presentation: &mut Option<PresentationController>, text: &str) {
-        if let Some(p) = presentation.as_mut() {
-            let _ = p.present(PetExpression::user_text(text));
-        }
     }
 
     fn apply_motion(

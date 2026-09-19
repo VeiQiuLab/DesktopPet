@@ -171,18 +171,6 @@ public:
         return true;
     }
 
-    /// 设置嘴型参数 ID（语义映射由 Rust 侧决定）。
-    void SetMouthParam(const std::string& name) {
-        Csm::CubismIdManager* idm = Csm::CubismFramework::GetIdManager();
-        _mouthId = idm ? idm->GetId(name.c_str()) : nullptr;
-        _hasMouth = _mouthId != nullptr;
-    }
-
-    /// 设置嘴型开合（0..1）。在 Update 中 motion 之后应用。
-    void SetMouthOpen(float v) {
-        _mouthOpen = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-    }
-
     /// 是否有非 Idle 动作正在播放（priority > 1）。
     bool IsBusy() const {
         return _motionManager && _motionManager->GetCurrentPriority() > 1;
@@ -209,12 +197,6 @@ public:
         if (_lookActive && _motionManager->GetCurrentPriority() <= 1) {
             UpdateLook(dt);
         }
-
-        // 嘴型同步：说话期间具有最终 mouth-open 权限（覆盖 motion 写入的该参数）。
-        if (_hasMouth && _mouthOpen > 0.0f) {
-            _model->SetParameterValue(_mouthId, _mouthOpen, 1.0f);
-        }
-
         if (_physics) {
             _physics->Evaluate(_model, dt);
         }
@@ -231,50 +213,6 @@ public:
         _mvp.SetMatrix(projection.GetArray());
         renderer->SetMvpMatrix(&projection);
         renderer->DrawModel();
-    }
-
-    /// 计算模型可见几何在窗口像素坐标下的包围盒（左上角原点，Y 向下）。
-    /// 结果写入 _visMinX/_visMinY/_visMaxX/_visMaxY；失败时 _visValid=false。
-    void ComputeVisibleBounds(float winW, float winH) {
-        if (!_model || winW <= 0.0f || winH <= 0.0f) { _visValid = false; return; }
-        const Csm::csmFloat32* m = _mvp.GetArray();
-        float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-        const Csm::csmInt32 dc = _model->GetDrawableCount();
-        for (Csm::csmInt32 i = 0; i < dc; ++i) {
-            if (!_model->GetDrawableDynamicFlagIsVisible(i)) continue;
-            if (_model->GetDrawableOpacity(i) <= 0.001f) continue;
-            const Csm::csmInt32 vc = _model->GetDrawableVertexCount(i);
-            const Live2D::Cubism::Core::csmVector2* verts = _model->GetDrawableVertexPositions(i);
-            if (!verts) continue;
-            for (Csm::csmInt32 v = 0; v < vc; ++v) {
-                const float px = verts[v].X;
-                const float py = verts[v].Y;
-                // 列主序 4x4，只取 2D 仿射部分
-                const float cx = m[0] * px + m[4] * py + m[12];
-                const float cy = m[1] * px + m[5] * py + m[13];
-                if (cx < minX) minX = cx;
-                if (cx > maxX) maxX = cx;
-                if (cy < minY) minY = cy;
-                if (cy > maxY) maxY = cy;
-            }
-        }
-        if (maxX < minX || maxY < minY) { _visValid = false; return; }
-        // NDC → 窗口像素（Y 翻转：NDC Y 向上，像素 Y 向下）
-        _visMinX = (minX + 1.0f) * 0.5f * winW;
-        _visMaxX = (maxX + 1.0f) * 0.5f * winW;
-        _visMinY = (1.0f - maxY) * 0.5f * winH;
-        _visMaxY = (1.0f - minY) * 0.5f * winH;
-        _visValid = true;
-    }
-
-    /// 可见包围盒（窗口像素）。返回 true 表示有效。
-    bool GetVisibleBounds(float* outL, float* outT, float* outR, float* outB) const {
-        if (!_visValid) return false;
-        if (outL) *outL = _visMinX;
-        if (outT) *outT = _visMinY;
-        if (outR) *outR = _visMaxX;
-        if (outB) *outB = _visMaxY;
-        return true;
     }
 
     // 命中测试：窗口内坐标 (winX, winY)（窗口左上角原点，像素，Y 向下）
@@ -483,10 +421,6 @@ private:
     std::vector<ID3D11ShaderResourceView*> _textureViews;
     Csm::CubismMatrix44 _mvp;
 
-    // 嘴型同步状态
-    Csm::CubismIdHandle _mouthId = nullptr;
-    bool _hasMouth = false;
-    float _mouthOpen = 0.0f;
 
     // 视线跟随状态
     bool _lookActive = false;
@@ -495,12 +429,6 @@ private:
     float _lookCurrentX = 0.0f;
     float _lookCurrentY = 0.0f;
 
-    // 可见几何包围盒（窗口像素，左上原点，Y 向下）
-    bool _visValid = false;
-    float _visMinX = 0.0f;
-    float _visMinY = 0.0f;
-    float _visMaxX = 0.0f;
-    float _visMaxY = 0.0f;
 };
 
 } // namespace
@@ -568,16 +496,6 @@ int cubism_shim_model_is_busy(void* handle) {
     return static_cast<ModelWrapper*>(handle)->IsBusy() ? 1 : 0;
 }
 
-void cubism_shim_model_set_mouth_param(void* handle, const char* name) {
-    if (!handle || !name) return;
-    static_cast<ModelWrapper*>(handle)->SetMouthParam(name);
-}
-
-void cubism_shim_model_set_mouth_open(void* handle, float value) {
-    if (!handle) return;
-    static_cast<ModelWrapper*>(handle)->SetMouthOpen(value);
-}
-
 void cubism_shim_model_free(void* handle) {
     delete static_cast<ModelWrapper*>(handle);
 }
@@ -612,8 +530,6 @@ void cubism_shim_model_draw(void* handle, float width, float height) {
 
     model->Draw(projection);
     renderer->EndFrame();
-    // 每帧刷新可见包围盒（供 Rust 侧锚定输入栏用）
-    model->ComputeVisibleBounds(width, height);
 }
 
 int cubism_shim_model_start_motion(void* handle, const char* group, int no, int priority) {
@@ -628,14 +544,4 @@ int cubism_shim_model_hit_test(void* handle, float winX, float winY, float winW,
     if (!handle) return 0;
     return static_cast<ModelWrapper*>(handle)->HitTest(winX, winY, winW, winH) ? 1 : 0;
 }
-
-// 可见几何包围盒（窗口像素，左上原点，Y 向下）。
-// 成功返回 1，并把边界写入 4 个 out 指针；失败返回 0（out 不修改）。
-int cubism_shim_model_get_visible_bounds(void* handle,
-                                          float* outL, float* outT,
-                                          float* outR, float* outB) {
-    if (!handle) return 0;
-    return static_cast<ModelWrapper*>(handle)->GetVisibleBounds(outL, outT, outR, outB) ? 1 : 0;
-}
-
 } // extern "C"

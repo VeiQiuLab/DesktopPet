@@ -24,8 +24,7 @@ use crate::behavior::PetEvent;
 use crate::character::cubism;
 use crate::config::{log_line, Config};
 use crate::platform::tray::{
-    show_tray_menu, TrayIcon, CMD_CHAR_BASE, CMD_TRAY_AGENT_EXIT, CMD_TRAY_AI_INPUT,
-    CMD_TRAY_AUTOSTART, CMD_TRAY_EXIT, CMD_TRAY_MEMORY, CMD_TRAY_PERSONA, CMD_TRAY_RESET,
+    show_tray_menu, TrayIcon, CMD_CHAR_BASE, CMD_TRAY_AUTOSTART, CMD_TRAY_EXIT, CMD_TRAY_RESET,
     CMD_TRAY_TEST_BUBBLE, CMD_TRAY_TOGGLE_VISIBLE, TRAY_CALLBACK_MSG,
 };
 
@@ -382,10 +381,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         CMD_TRAY_EXIT => {
                             let _ = (*st).events.send(PetEvent::MenuQuit);
                         }
-                        CMD_TRAY_AI_INPUT => broadcast_to_agent("DesktopPetAgent_WakeInput_v1"),
-                        CMD_TRAY_MEMORY => broadcast_to_agent("DesktopPetAgent_OpenMemory"),
-                        CMD_TRAY_PERSONA => broadcast_to_agent("DesktopPetAgent_OpenPersona"),
-                        CMD_TRAY_AGENT_EXIT => broadcast_to_agent("DesktopPetAgent_Quit"),
                         CMD_TRAY_TEST_BUBBLE => {
                             let _ = (*st).events.send(PetEvent::MenuTestBubble);
                         }
@@ -438,28 +433,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
-}
-
-/// 向 pet-agent 广播具名消息。
-pub unsafe fn broadcast_to_agent(name: &str) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        PostMessageW, RegisterWindowMessageW, HWND_BROADCAST,
-    };
-    let n: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-    let msg = RegisterWindowMessageW(PCWSTR(n.as_ptr()));
-    if msg != 0 {
-        let _ = PostMessageW(Some(HWND_BROADCAST), msg, WPARAM(0), LPARAM(0));
-    }
-}
-
-/// 显示桌宠窗口。
-pub unsafe fn show_window(hwnd: HWND) {
-    let _ = ShowWindow(hwnd, SW_SHOWNA);
-}
-
-/// 隐藏桌宠窗口。
-pub unsafe fn hide_window(hwnd: HWND) {
-    let _ = ShowWindow(hwnd, SW_HIDE);
 }
 
 /// 桌宠窗口的屏幕矩形（供气泡定位）。

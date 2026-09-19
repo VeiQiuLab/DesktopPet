@@ -1,49 +1,23 @@
 # Rust 构建产物
 /target/
-/pet-protocol/target/
-/pet-agent/target/
 
 # C++ shim 构建目录
 /shim/build/
 
-# Cubism SDK
+# Cubism SDK（大，不入库，由开发者自行放入 vendor/）
 /vendor/
+
+# 发布产物
+/dist/
 
 # 调试符号
 *.pdb
 
 # 运行日志
 *.log
-run*.log
-pet_runtime.log
-pet-agent.log
-cli_out.txt
 
 # 用户本地配置
 desktop-pet.config.json
-pet-agent.config.json
 
-# Piper voice 模型（体积大，不入库）
-/pet-agent/voices/*.onnx
-/pet-agent/voices/*.onnx.json
-
-# Piper 运行时 / 私有 Python 环境（不入库）
-/pet-agent/tools/
-
-# LiquidGlass 构建产物（源码入库，build 不入库）
-/pet-agent/thirdparty/LiquidGlass/build/
-
-# Memory 数据库 / 备份（用户数据，不入库）
-/pet-agent/data/
-/pet-agent/target/**/data/
-/pet-agent/target/**/backups/
-
-# 临时启动脚本
-_launch_*.bat
-_l.bat
-_cli.bat
-_ui.bat
-_ollama.bat
-
-# 截图（调试用，全部不入库）
-/*.png
+# 截图（调试用）
+*.png

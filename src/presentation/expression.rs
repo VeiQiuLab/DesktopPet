@@ -69,13 +69,4 @@ impl PetExpression {
             PetExpression::Motion { .. } => None,
         }
     }
-
-    /// 便捷构造：用户文本。
-    pub fn user_text(text: impl Into<String>) -> Self {
-        PetExpression::Text {
-            text: text.into(),
-            priority: Priority::User,
-            duration: None,
-        }
-    }
 }

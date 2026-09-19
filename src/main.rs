@@ -1,13 +1,14 @@
-// 隐藏控制台窗口（GUI 程序）；调试时可注释掉。
+//! DesktopPet — Live2D 桌宠 Runtime。
+//!
+//! 单进程 GUI：双击本 exe 即出现桌宠，无子进程、无控制台。
+
 #![windows_subsystem = "windows"]
 
-mod agent_launcher;
 mod app;
 mod autostart;
 mod behavior;
 mod character;
 mod config;
-mod ipc;
 mod platform;
 mod presentation;
 mod single_instance;
@@ -16,7 +17,7 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 
-/// 轻量 CLI 测试钩子（autostart，独立于 IPC client）。
+/// 轻量 CLI 测试钩子（autostart，独立于 GUI）。
 fn run_autostart_cli(args: &[String]) -> bool {
     if args.len() < 2 {
         return false;
@@ -45,17 +46,11 @@ fn run_autostart_cli(args: &[String]) -> bool {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // 1) IPC client 模式（不获取 mutex，不创建第二个桌宠）
-    if let Some(code) = ipc::client::run_cli(&args) {
-        std::process::exit(code);
-    }
-
-    // 2) autostart 测试钩子
+    // autostart 测试钩子
     if run_autostart_cli(&args) {
         return;
     }
 
-    // 3) 正常 GUI 模式
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
@@ -70,16 +65,8 @@ fn main() {
 
     config::reset_log_file();
 
-    // 一键启动：静默拉起 pet-agent（单实例保护由 agent 自身负责）
-    agent_launcher::launch_agent();
-
     let mut app = app::App::new();
-    let result = app.run();
-
-    // 退出联动：请求 agent 退出
-    agent_launcher::request_agent_exit();
-
-    if let Err(e) = result {
+    if let Err(e) = app.run() {
         config::log_error(&format!("fatal: {e}"));
         std::process::exit(1);
     }

@@ -21,3 +21,8 @@ desktop-pet.config.json
 
 # 截图（调试用）
 *.png
+
+# 临时调试脚本
+/_*.py
+/_*.ps1
+/_*.bat

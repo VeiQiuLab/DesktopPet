@@ -90,7 +90,9 @@ pub unsafe fn create_window(
         log_line("RegisterClassExW failed");
     }
 
-    let ex_style = WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW;
+    // WS_EX_APPWINDOW 强制顶层窗口出现在任务栏（保持透明桌宠行为不变）。
+    // 不使用 WS_EX_TOOLWINDOW（它会让窗口不显示任务栏按钮）。
+    let ex_style = WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP | WS_EX_APPWINDOW;
     let style = WS_POPUP;
 
     let hwnd = CreateWindowExW(

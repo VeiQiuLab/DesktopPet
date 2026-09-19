@@ -76,6 +76,9 @@ unsafe extern "system" fn mgr_wndproc(
             let _ = ShowWindow(hwnd, SW_HIDE);
             LRESULT(0)
         }
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX | WM_CTLCOLOREDIT => {
+            crate::theme::on_ctlcolor(hwnd, msg, wparam)
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -98,6 +101,7 @@ pub fn show(mgr: MemoryManager) {
             lpfnWndProc: Some(mgr_wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
+            hbrBackground: crate::theme::bg_brush(),
             ..Default::default()
         };
         let _ = RegisterClassExW(&wc);

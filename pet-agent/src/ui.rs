@@ -9,7 +9,7 @@ use std::cell::RefCell;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetStockObject, GET_STOCK_OBJECT_FLAGS, HBRUSH};
+
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_SPACE,
 };
@@ -88,7 +88,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
-            hbrBackground: HBRUSH(GetStockObject(GET_STOCK_OBJECT_FLAGS(0)).0), // NULL_BRUSH
+            hbrBackground: crate::theme::bg_brush(),
             ..Default::default()
         };
         if RegisterClassExW(&wc) == 0 {
@@ -134,6 +134,23 @@ pub fn run_ui(provider_override: Option<&str>) {
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
         create_controls(hwnd);
+        // 深色主题字体
+        {
+            let dpi = {
+                let d = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd);
+                if d == 0 {
+                    96
+                } else {
+                    d
+                }
+            };
+            let font = crate::theme::create_font(dpi, 11);
+            for id in [ID_EDIT, ID_SEND, ID_STATUS] {
+                if let Ok(c) = GetDlgItem(Some(hwnd), id) {
+                    crate::theme::apply_font(c, font);
+                }
+            }
+        }
 
         CTX.with(|c| {
             *c.borrow_mut() = Some(UiContext {
@@ -692,6 +709,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_TIMER => {
             poll_results(hwnd);
             LRESULT(0)
+        }
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX | WM_CTLCOLOREDIT => {
+            crate::theme::on_ctlcolor(hwnd, msg, wparam)
         }
         WM_CLOSE => {
             // 关闭按钮 → 隐藏而非退出

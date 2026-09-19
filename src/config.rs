@@ -55,8 +55,8 @@ impl Default for Config {
             window: WindowConfig {
                 x: 200,
                 y: 200,
-                width: 640,
-                height: 640,
+                width: 360,
+                height: 360,
             },
             character: CharacterConfig::default(),
             auto_start: false,

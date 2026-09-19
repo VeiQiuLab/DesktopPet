@@ -3,7 +3,7 @@
   "display_name": "Default Pet",
   "model": {
     "model3": "model/test.model3.json",
-    "scale": 1.0,
+    "scale": 0.5,
     "offset_x": 0.0,
     "offset_y": 0.0
   },

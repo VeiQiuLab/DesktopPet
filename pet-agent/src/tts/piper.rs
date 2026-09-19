@@ -116,6 +116,12 @@ impl PiperProvider {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        // 不弹出控制台窗口（CREATE_NO_WINDOW = 0x08000000）
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
 
         let mut child = cmd
             .spawn()

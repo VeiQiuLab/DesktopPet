@@ -5,6 +5,9 @@
 //!
 //! 本进程不接触 HWND / Cubism / D3D；不修改桌宠配置；不绕过 IPC。
 
+// GUI（ui 模式）不弹控制台；CLI 模式通过 attach 父控制台输出。
+#![windows_subsystem = "windows"]
+
 mod autostart;
 mod config;
 mod context;
@@ -18,6 +21,8 @@ mod prompt;
 mod provider;
 #[cfg(windows)]
 mod single_instance;
+#[cfg(windows)]
+mod theme;
 mod tts;
 #[cfg(windows)]
 mod ui;
@@ -28,7 +33,54 @@ use std::io::{self, BufRead, Write};
 use config::AgentConfig;
 use provider::Provider;
 
+/// 附着到父进程控制台（从已有终端运行时），使 println! 可见；
+/// 双击启动（无父控制台）时不创建新控制台窗口。
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Console::{
+        AttachConsole, SetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        // 若 stdout 已被重定向（管道/文件），保持不动，避免破坏捕获
+        use windows::Win32::System::Console::GetStdHandle;
+        if let Ok(h) = GetStdHandle(STD_OUTPUT_HANDLE) {
+            if !h.is_invalid() && h.0 as isize != 0 {
+                return;
+            }
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
+            // windows 子系统下 stdout/stderr 句柄无效，需重新打开到 CONOUT$
+            let name: Vec<u16> = "CONOUT$".encode_utf16().chain(std::iter::once(0)).collect();
+            let open = || {
+                CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    (GENERIC_READ | GENERIC_WRITE).0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+            };
+            if let Ok(h) = open() {
+                let _ = SetStdHandle(STD_OUTPUT_HANDLE, h);
+            }
+            if let Ok(h) = open() {
+                let _ = SetStdHandle(STD_ERROR_HANDLE, h);
+            }
+        }
+    }
+}
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn main() {
+    attach_parent_console();
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("chat");
 

@@ -305,6 +305,19 @@ private:
             unsigned char* pixels = stbi_load(texPath.c_str(), &w, &h, &channels, 4);
             if (!pixels) continue;
 
+            // PSD2Live 导出的 atlas 是 straight alpha；Cubism premultiplied shader
+            // 期望预乘贴图。此处把 RGB 预乘 alpha，避免发丝边缘暗/白边。
+            {
+                const size_t count = static_cast<size_t>(w) * static_cast<size_t>(h);
+                for (size_t p = 0; p < count; ++p) {
+                    unsigned char* px = pixels + p * 4;
+                    const unsigned int a = px[3];
+                    px[0] = static_cast<unsigned char>(px[0] * a / 255);
+                    px[1] = static_cast<unsigned char>(px[1] * a / 255);
+                    px[2] = static_cast<unsigned char>(px[2] * a / 255);
+                }
+            }
+
             D3D11_TEXTURE2D_DESC desc = {};
             desc.Width = static_cast<UINT>(w);
             desc.Height = static_cast<UINT>(h);

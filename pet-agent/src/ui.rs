@@ -129,7 +129,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
-            hbrBackground: crate::theme::bg_brush(), // 深色胶囊底
+            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()), // 不绘制，玻璃透出
             ..Default::default()
         };
         if RegisterClassExW(&wc) == 0 {
@@ -144,7 +144,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             200,
             200,
             428,
-            64,
+            52,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -155,14 +155,8 @@ pub fn run_ui(provider_override: Option<&str>) {
         // 现代外观：大圆角 + 亚克力玻璃背景
         apply_modern_style(hwnd);
 
-        let _ = SetWindowPos(hwnd, None, 200, 200, 428, 64, SWP_NOZORDER | SWP_NOACTIVATE);
-        // 胶囊形窗口区域（圆角 = 高度一半）
-        {
-            use windows::Win32::Graphics::Gdi::CreateRoundRectRgn;
-            use windows::Win32::Graphics::Gdi::SetWindowRgn;
-            let rgn = CreateRoundRectRgn(0, 0, 429, 65, 64, 64);
-            let _ = SetWindowRgn(hwnd, Some(rgn), true);
-        }
+        let _ = SetWindowPos(hwnd, None, 200, 200, 428, 52, SWP_NOZORDER | SWP_NOACTIVATE);
+        // 圆角交由 DWM（DWMWCP_ROUND）处理，不用 SetWindowRgn（会裁掉毛玻璃）
         create_controls(hwnd);
         // 深色主题字体
         {
@@ -323,8 +317,8 @@ unsafe fn create_controls(hwnd: HWND) {
             | WS_VISIBLE
             | WS_TABSTOP
             | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN) as u32),
-        26,
-        16,
+        24,
+        10,
         352,
         32,
         Some(hwnd),
@@ -339,10 +333,10 @@ unsafe fn create_controls(hwnd: HWND) {
         w!("BUTTON"),
         w!(""),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
-        378,
-        14,
-        40,
-        40,
+        382,
+        12,
+        28,
+        28,
         Some(hwnd),
         Some(HMENU(ID_SEND as isize as *mut _)),
         Some(hinst),
@@ -841,7 +835,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// 应用 Win11 现代外观：大圆角 + 亚克力玻璃背景。
 unsafe fn apply_modern_style(hwnd: HWND) {
     use windows::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW,
+        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DWMWINDOWATTRIBUTE,
     };
     use windows::Win32::UI::Controls::MARGINS;
     let round = DWMWCP_ROUND;
@@ -851,11 +847,32 @@ unsafe fn apply_modern_style(hwnd: HWND) {
         &round as *const _ as *const core::ffi::c_void,
         4,
     );
+    // 强制深色（否则毛玻璃是浅色/白色）
+    let dark: windows::core::BOOL = true.into();
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWINDOWATTRIBUTE(20), // DWMWA_USE_IMMERSIVE_DARK_MODE
+        &dark as *const _ as *const core::ffi::c_void,
+        4,
+    );
+    // 系统毛玻璃材质（亚克力）
+    let backdrop = DWMSBT_TRANSIENTWINDOW;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop as *const _ as *const core::ffi::c_void,
+        4,
+    );
+    // 框架扩展到整个客户区（让材质铺满）
+    let margins = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
     // 不设置 SYSTEMBACKDROP_TYPE（会覆盖自绘深色背景）
-    // 不扩展 DWM 框架（避免与自绘背景冲突）
     let _ = std::mem::size_of::<MARGINS>();
-    // 注：暂不启用亚克力，避免 EDIT 子控件与半透明玻璃产生「两层颜色」。
-    // 真液态玻璃（WindowsLiquidGlass / D3D11 自绘）将在后续集成。
 }
 
 /// 通过 SetWindowCompositionAttribute 应用亚克力（毛玻璃）。
@@ -890,7 +907,7 @@ unsafe fn apply_acrylic(hwnd: HWND) {
     let mut policy = AccentPolicy {
         accent_state: 4,
         accent_flags: 2,
-        gradient_color: 0xCC1A1A1A,
+        gradient_color: 0x40_1A1A1A, // 仅 25% 深色 → 通透玻璃
         animation_id: 0,
     };
     let mut data = WcaData {

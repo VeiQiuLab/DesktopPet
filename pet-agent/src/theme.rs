@@ -6,13 +6,14 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, GetStockObject, SetBkColor, SetBkMode, SetTextColor,
-    DEFAULT_GUI_FONT, HBRUSH, HGDIOBJ, TRANSPARENT,
+    CreateSolidBrush, DeleteObject, GetStockObject, SetBkMode, SetTextColor, DEFAULT_GUI_FONT,
+    HBRUSH, HGDIOBJ, HOLLOW_BRUSH, TRANSPARENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// 主题色（RGB）。
 pub const BG: (u8, u8, u8) = (26, 28, 33);
+#[allow(dead_code)]
 pub const PANEL: (u8, u8, u8) = (26, 28, 33);
 pub const FG: (u8, u8, u8) = (230, 232, 236);
 #[allow(dead_code)]
@@ -69,9 +70,10 @@ pub unsafe fn on_ctlcolor(_hwnd: HWND, msg: u32, wparam: WPARAM) -> LRESULT {
             LRESULT(bg_brush().0 as isize)
         }
         WM_CTLCOLOREDIT => {
+            // 透明背景：让亚克力毛玻璃透出
             let _ = SetTextColor(hdc, rgb(FG));
-            let _ = SetBkColor(hdc, rgb(PANEL));
-            LRESULT(bg_brush().0 as isize)
+            let _ = SetBkMode(hdc, TRANSPARENT);
+            LRESULT(GetStockObject(HOLLOW_BRUSH).0 as isize)
         }
         _ => LRESULT(0),
     }

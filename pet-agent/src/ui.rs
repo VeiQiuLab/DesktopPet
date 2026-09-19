@@ -65,6 +65,8 @@ pub fn run_ui(provider_override: Option<&str>) {
         crate::log_line(&format!("PANIC: {info}"));
     }));
     let cfg = AgentConfig::load();
+    crate::config::set_lip_sync_enabled(cfg.lip_sync.enabled);
+    crate::tts::sapi::cleanup_temp();
     let pname = AiWorker::provider_name(&cfg, provider_override);
     let worker = AiWorker::start(cfg.clone(), provider_override.map(|s| s.to_string()));
     let wake_msg = single_instance::wake_message_id();

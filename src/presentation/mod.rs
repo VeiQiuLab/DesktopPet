@@ -15,6 +15,7 @@
 
 pub mod controller;
 pub mod expression;
+pub mod lipsync;
 
 pub use controller::PresentationController;
 #[allow(unused_imports)]

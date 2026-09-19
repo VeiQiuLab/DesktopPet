@@ -3,9 +3,11 @@
 //! 链路：AssistantResponse → sanitize → TtsProvider → Playback。
 //! 独立 worker + 有界「最新优先」队列；可停止；失败隔离。
 
+pub mod audio;
 pub mod playback;
 pub mod provider;
 pub mod sanitize;
+pub mod sapi;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -142,9 +144,18 @@ fn worker_loop(
                 if audio.is_empty() {
                     continue;
                 }
-                playback::play(&audio);
+                // 计算 envelope 并一次性发给 DesktopPet（不高频 IPC）
+                if crate::config::lip_sync_enabled() {
+                    let env = audio::envelope(&audio, 30.0, 1.0, 0.02);
+                    if !env.is_empty() {
+                        let json = pet_protocol::build_lip_sync(30.0, &env, 0);
+                        let _ = crate::ipc::send_raw_pub(&json);
+                    }
+                }
+                let wav = audio.to_wav();
+                playback::play(&wav);
                 // 粗略等待播放结束（可被 stop 打断）
-                let secs = (audio.len() as f32 / 32000.0).clamp(0.2, 30.0);
+                let secs = audio.duration_secs().clamp(0.2, 30.0);
                 let step = Duration::from_millis(50);
                 let mut waited = 0.0f32;
                 while waited < secs {

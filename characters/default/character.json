@@ -25,6 +25,9 @@
       "min_interval": 2.0
     }
   },
+  "parameters": {
+    "mouth_open": "ParamMouthOpenY"
+  },
   "speech": {
     "greeting": "你好呀，我是你的桌面伙伴。今天也要加油哦！",
     "idle": [

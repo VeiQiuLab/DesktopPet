@@ -251,6 +251,7 @@ unsafe fn handle_connection(
                 crate::ipc::protocol::ValidatedRequest::Expression(e) => e.id.clone(),
                 crate::ipc::protocol::ValidatedRequest::Command { id, .. } => id.clone(),
                 crate::ipc::protocol::ValidatedRequest::Query { id, .. } => id.clone(),
+                crate::ipc::protocol::ValidatedRequest::LipSync { .. } => None,
             };
             // 有界队列：满则快速失败
             match tx.try_send(req) {

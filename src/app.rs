@@ -84,12 +84,17 @@ impl App {
             let mut model: Option<CubismModel> = None;
             let mut behavior: Option<BehaviorController> = None;
             let mut presentation: Option<PresentationController> = None;
+            let mut lipsync: Option<crate::presentation::lipsync::LipSyncController> = None;
 
             if let Some(pkg) = manager.resolve_active(&resolved_id) {
                 let idle = pkg.idle_behavior().clone();
                 model = Self::init_model(&gfx, pkg, win_w, win_h);
                 behavior = Some(BehaviorController::new(idle));
                 presentation = Some(PresentationController::new(pkg));
+                if let Some(m) = &model {
+                    m.set_mouth_param(pkg.mouth_param());
+                }
+                lipsync = Some(crate::presentation::lipsync::LipSyncController::new());
             } else {
                 log_line("no character available");
             }
@@ -156,6 +161,7 @@ impl App {
                     &mut model,
                     &mut behavior,
                     &mut presentation,
+                    &mut lipsync,
                     &ipc_rx,
                     win_w,
                     win_h,
@@ -203,6 +209,11 @@ impl App {
                             m.set_look(lx, ly);
                         } else {
                             m.set_look(0.0, 0.0);
+                        }
+                        // 嘴型同步（轻量 amplitude lookup）
+                        if let Some(ls) = lipsync.as_mut() {
+                            let mouth = ls.tick(dt);
+                            m.set_mouth_open(mouth);
                         }
                     }
 
@@ -362,6 +373,7 @@ impl App {
         model: &mut Option<CubismModel>,
         behavior: &mut Option<BehaviorController>,
         presentation: &mut Option<PresentationController>,
+        lipsync: &mut Option<crate::presentation::lipsync::LipSyncController>,
         ipc_rx: &Receiver<ValidatedRequest>,
         win_w: i32,
         win_h: i32,
@@ -406,6 +418,15 @@ impl App {
                 }
                 ValidatedRequest::Query { .. } => {
                     // query 已在 IPC worker 内直接应答，这里不会到达
+                }
+                ValidatedRequest::LipSync {
+                    sample_hz,
+                    samples,
+                    start_delay_ms,
+                } => {
+                    if let Some(ls) = lipsync.as_mut() {
+                        ls.set_envelope(sample_hz, samples, start_delay_ms);
+                    }
                 }
                 ValidatedRequest::Command { command, .. } => match command {
                     ValidatedCommand::Show => {

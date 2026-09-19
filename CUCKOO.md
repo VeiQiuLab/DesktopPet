@@ -724,7 +724,90 @@ trait TtsProvider { fn name(&self) -> &str; fn synthesize(&self, text: &str) -> 
 
 ### 18.12 已知技术债（第九阶段）
 
-- TTS Provider 仅 Null + Mock（真实本地语音 SAPI / Edge TTS 未接入）。
+- ~~TTS Provider 仅 Null + Mock~~ → 第十阶段已接入 SAPI（见 §19）。
 - 无流式 TTS。
-- Lip Sync 未实现（预留接口）。
-- Mock TTS 生成静音，仅验证链路不验证音质。
+
+---
+
+## 19. 真实 Windows TTS + Amplitude Lip Sync（第十阶段）
+
+### 19.1 架构
+
+```
+LLM → pet-agent
+       ├─ Expression → DesktopPet Bubble / Motion
+       └─ TTS → AudioOutput
+                  ├─ Playback（本地发声）
+                  └─ Envelope（30Hz）→ 一次 IPC → DesktopPet
+                                                        ↓
+                                                  LipSyncController
+                                                        ↓
+                                                   ParamMouthOpenY
+```
+
+TTS 引擎**不在** DesktopPet；DesktopPet 只认识归一化 mouth amplitude。
+
+### 19.2 SAPI Provider
+
+- `tts/sapi.rs`：COM `ISpVoice` 合成到临时 WAV（`ISpStream::BindToFile`）→ 解析为 `AudioOutput`。
+- 无 API Key、无联网、使用系统已安装 voice；不自动下载 voice。
+- `voice=null` → 系统默认；指定 voice 找不到 → fallback 默认 + warning。
+- 临时文件在 `%TEMP%\DesktopPet\`，用后即删，启动时清理 >1h 过期文件。
+- 子命令 `pet-agent tts-voices` 列出可用 voice。
+- **本机实测**：SAPI 调用返回 `0x80045003（没有注册类）`——当前环境 SAPI 语音引擎不可用；
+  Provider 优雅失败并写日志，不影响 AI 文本 / 气泡 / history（符合「Provider 失败隔离」）。
+
+### 19.3 AudioOutput
+
+```rust
+struct AudioOutput { pcm_i16: Vec<i16>, sample_rate: u32, channels: u16, bits_per_sample: u16 }
+```
+- 所有 Provider 统一返回它；`to_wav()` 供 Playback。
+- Mock 也迁移到同一结构。
+
+### 19.4 Envelope 算法
+
+- 从 PCM 计算 ~30Hz RMS envelope；按峰值归一化 + gain + noise floor；clamp [0,1]。
+- attack / release 平滑在 DesktopPet 侧 `LipSyncController` 应用。
+- 实测（`envelope-test`）：静音段 ≈0、正弦段 >0、全部 finite、全部在 [0,1]。
+
+### 19.5 LipSync 协议
+
+```json
+{ "version": 1, "type": "lip_sync", "sample_hz": 30, "samples": [0.0, 0.12, ...], "start_delay_ms": 0 }
+```
+- 校验：sample_hz ∈ [1,120]、样本数 ≤ 3600、全部 finite 且 [0,1]、延迟 ≤ 2000ms。
+- **一次 IPC 发整个 envelope**（非每帧高频 IPC）。
+
+### 19.6 DesktopPet LipSyncController
+
+- `presentation/lipsync.rs`：记录 monotonic start，每帧按 elapsed 查找 amplitude，attack/release 平滑，结束/stop 归零。
+- 不加载音频、不播声音、不解析 WAV、不知道 SAPI。
+- 每帧仅做轻量 lookup，不产生高频 IPC。
+
+### 19.7 Character mouth mapping
+
+- `character.json` → `parameters.mouth_open`（缺省 `ParamMouthOpenY`）。
+- 模型无该参数 → shim 安全 no-op（`_hasMouth=false`）。
+
+### 19.8 Cubism 参数更新顺序
+
+motion → look（仅 Idle）→ **mouth（说话期间最终权限）** → physics → save → update。
+说话期间 lip sync 对 mouth-open 参数具有最终覆盖权，不影响其他参数。
+
+### 19.9 Stop / interrupt
+
+停止语音时：停播放 + 清 pending + 发 LipSync Stop（空 envelope）+ mouth 立即归零。新回复打断旧语音同理。
+
+### 19.10 Agent / DesktopPet 边界
+
+- DesktopPet offline：TTS 仍正常说话，仅 lip sync IPC 失败（不阻止语音）。
+- TTS disabled：退化为 AI → Bubble，无 synthesis / playback / lip sync。
+- Provider-test：`pet-agent provider-test` 发极短请求（`只回复：测试成功`），不发往 DesktopPet；无 endpoint 时输出 `provider unavailable`。
+
+### 19.11 已知技术债（第十阶段）
+
+- 本机 SAPI 引擎不可用（`0x80045003`），真实发声未在本机验证；架构与失败隔离已就绪。
+- `tts-voices` 目前仅返回 (default)（未展开全部 voice token 枚举）。
+- Lip sync 为 amplitude envelope（非 phoneme/viseme）。
+- 无流式 TTS。

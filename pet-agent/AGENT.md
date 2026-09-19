@@ -61,7 +61,9 @@ pet-agent.exe ui      # 常驻：原生输入框 + 托盘 + 全局快捷键
 ## TTS 输出层（第九阶段）
 
 - 配置 `tts.enabled=true` 后，AI 回复会经 `sanitize → TtsProvider → Playback` 朗读。
-- 当前 Provider：`null`（不发声）、`mock`（生成静音 WAV，验证链路）。
+- 当前 Provider：`null`（不发声）、`mock`（静音，验证链路）、`sapi`（Windows 本地语音，无需 Key）。
+- 子命令：`pet-agent tts-voices`（列出 voice）、`pet-agent envelope-test`（验证 envelope）、`pet-agent provider-test`。
+- Lip Sync：`tts.lip_sync.enabled`，从 PCM 计算 30Hz envelope，一次 IPC 发给 DesktopPet 驱动 `ParamMouthOpenY`。
 - 独立 TTS worker + 最新优先队列（可打断），不阻塞 UI / DesktopPet。
 - 「停止」/ 新消息 / 清空对话 / 退出都会停止当前语音。
 - TTS 失败不影响 AI 文本、气泡与 history。

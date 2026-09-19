@@ -171,6 +171,18 @@ public:
         return true;
     }
 
+    /// 设置嘴型参数 ID（语义映射由 Rust 侧决定）。
+    void SetMouthParam(const std::string& name) {
+        Csm::CubismIdManager* idm = Csm::CubismFramework::GetIdManager();
+        _mouthId = idm ? idm->GetId(name.c_str()) : nullptr;
+        _hasMouth = _mouthId != nullptr;
+    }
+
+    /// 设置嘴型开合（0..1）。在 Update 中 motion 之后应用。
+    void SetMouthOpen(float v) {
+        _mouthOpen = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    }
+
     /// 是否有非 Idle 动作正在播放（priority > 1）。
     bool IsBusy() const {
         return _motionManager && _motionManager->GetCurrentPriority() > 1;
@@ -196,6 +208,11 @@ public:
         // 视线跟随：仅在 Idle（priority <= 1）时写入，避免干扰 Nod/Shake。
         if (_lookActive && _motionManager->GetCurrentPriority() <= 1) {
             UpdateLook(dt);
+        }
+
+        // 嘴型同步：说话期间具有最终 mouth-open 权限（覆盖 motion 写入的该参数）。
+        if (_hasMouth && _mouthOpen > 0.0f) {
+            _model->SetParameterValue(_mouthId, _mouthOpen, 1.0f);
         }
 
         if (_physics) {
@@ -409,6 +426,11 @@ private:
     std::vector<ID3D11ShaderResourceView*> _textureViews;
     Csm::CubismMatrix44 _mvp;
 
+    // 嘴型同步状态
+    Csm::CubismIdHandle _mouthId = nullptr;
+    bool _hasMouth = false;
+    float _mouthOpen = 0.0f;
+
     // 视线跟随状态
     bool _lookActive = false;
     float _lookTargetX = 0.0f;
@@ -480,6 +502,16 @@ void cubism_shim_model_set_look(void* handle, float x, float y) {
 int cubism_shim_model_is_busy(void* handle) {
     if (!handle) return 0;
     return static_cast<ModelWrapper*>(handle)->IsBusy() ? 1 : 0;
+}
+
+void cubism_shim_model_set_mouth_param(void* handle, const char* name) {
+    if (!handle || !name) return;
+    static_cast<ModelWrapper*>(handle)->SetMouthParam(name);
+}
+
+void cubism_shim_model_set_mouth_open(void* handle, float value) {
+    if (!handle) return;
+    static_cast<ModelWrapper*>(handle)->SetMouthOpen(value);
 }
 
 void cubism_shim_model_free(void* handle) {

@@ -39,6 +39,8 @@ extern "C" {
     ) -> c_int;
     fn cubism_shim_model_set_look(handle: *mut c_void, x: c_float, y: c_float);
     fn cubism_shim_model_is_busy(handle: *mut c_void) -> c_int;
+    fn cubism_shim_model_set_mouth_param(handle: *mut c_void, name: *const c_char);
+    fn cubism_shim_model_set_mouth_open(handle: *mut c_void, value: c_float);
 }
 
 /// 原始句柄直接命中测试（供窗口 wndproc 使用，避免借用 CubismModel）。
@@ -118,6 +120,18 @@ impl CubismModel {
     /// 是否有非 Idle 动作正在播放（priority > 1）。
     pub fn is_busy(&self) -> bool {
         unsafe { cubism_shim_model_is_busy(self.handle) != 0 }
+    }
+
+    /// 设置嘴型参数 ID（语义映射）。
+    pub fn set_mouth_param(&self, name: &str) {
+        if let Ok(c) = CString::new(name) {
+            unsafe { cubism_shim_model_set_mouth_param(self.handle, c.as_ptr()) }
+        }
+    }
+
+    /// 设置嘴型开合（0..1）。
+    pub fn set_mouth_open(&self, v: f32) {
+        unsafe { cubism_shim_model_set_mouth_open(self.handle, v) }
     }
 
     /// 播放动作。返回 true 表示成功。优先级：1=Idle, 2=Normal, 3=Force。

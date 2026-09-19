@@ -21,6 +21,11 @@ pub enum ValidatedRequest {
         id: Option<String>,
         query: String,
     },
+    LipSync {
+        sample_hz: f32,
+        samples: Vec<f32>,
+        start_delay_ms: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -88,5 +93,14 @@ pub fn parse_request(json: &str) -> Result<ValidatedRequest, String> {
             ValidatedRequest::Command { id, command: cmd }
         }
         Wire::Query { id, query } => ValidatedRequest::Query { id, query },
+        Wire::LipSync {
+            sample_hz,
+            samples,
+            start_delay_ms,
+        } => ValidatedRequest::LipSync {
+            sample_hz,
+            samples,
+            start_delay_ms,
+        },
     })
 }

@@ -17,6 +17,10 @@ pub const MAX_TEXT_CHARS: usize = 1000;
 /// 展示时长上下限（毫秒）。
 pub const MIN_DURATION_MS: u64 = 500;
 pub const MAX_DURATION_MS: u64 = 30_000;
+/// Lip sync 样本上限（约 30 秒 @ 120Hz）。
+pub const MAX_LIPSYNC_SAMPLES: usize = 3600;
+/// Lip sync 起始延迟上限（毫秒）。
+pub const MAX_LIPSYNC_DELAY_MS: u32 = 2000;
 
 /// 语义动作（外部只能使用这些）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +91,24 @@ pub enum Request {
     /// 只读查询（v1 兼容扩展）。
     #[serde(rename = "query")]
     Query(QueryRequest),
+    /// 嘴型同步 envelope（第九/十阶段）。
+    #[serde(rename = "lip_sync")]
+    LipSync(LipSyncRequest),
+}
+
+/// 嘴型 envelope 请求。samples 为 [0,1] 归一化振幅。
+#[derive(Debug, Deserialize)]
+pub struct LipSyncRequest {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub sample_hz: f32,
+    #[serde(default)]
+    pub samples: Vec<f32>,
+    #[serde(default)]
+    pub start_delay_ms: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +178,11 @@ pub enum WireRequest {
         id: Option<String>,
         query: String,
     },
+    LipSync {
+        sample_hz: f32,
+        samples: Vec<f32>,
+        start_delay_ms: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +200,7 @@ impl WireRequest {
             WireRequest::Expression { id, .. } => id.clone(),
             WireRequest::Command { id, .. } => id.clone(),
             WireRequest::Query { id, .. } => id.clone(),
+            WireRequest::LipSync { .. } => None,
         }
     }
 }
@@ -187,6 +215,7 @@ pub enum ValidateError {
     UnknownMotion(String),
     UnknownCommand(String),
     UnknownPriority(String),
+    InvalidLipSync,
 }
 
 impl std::fmt::Display for ValidateError {
@@ -199,6 +228,7 @@ impl std::fmt::Display for ValidateError {
             ValidateError::UnknownMotion(m) => write!(f, "unknown motion: {m}"),
             ValidateError::UnknownCommand(c) => write!(f, "unknown command: {c}"),
             ValidateError::UnknownPriority(p) => write!(f, "unknown priority: {p}"),
+            ValidateError::InvalidLipSync => write!(f, "invalid lip_sync envelope"),
         }
     }
 }
@@ -270,6 +300,30 @@ pub fn parse(text: &str) -> Result<WireRequest, ValidateError> {
                 query: q.query,
             })
         }
+        Request::LipSync(l) => {
+            if l.version != 0 && l.version != PROTOCOL_VERSION {
+                return Err(ValidateError::UnsupportedVersion(l.version));
+            }
+            // sample_hz 合理范围
+            if !(l.sample_hz.is_finite() && l.sample_hz >= 1.0 && l.sample_hz <= 120.0) {
+                return Err(ValidateError::InvalidLipSync);
+            }
+            // 样本数上限（30s @ 120Hz = 3600）
+            if l.samples.len() > MAX_LIPSYNC_SAMPLES {
+                return Err(ValidateError::InvalidLipSync);
+            }
+            // 全部 finite 且 [0,1]
+            for s in &l.samples {
+                if !s.is_finite() || *s < 0.0 || *s > 1.0 {
+                    return Err(ValidateError::InvalidLipSync);
+                }
+            }
+            Ok(WireRequest::LipSync {
+                sample_hz: l.sample_hz,
+                samples: l.samples,
+                start_delay_ms: l.start_delay_ms.min(MAX_LIPSYNC_DELAY_MS),
+            })
+        }
     }
 }
 
@@ -338,6 +392,18 @@ pub fn build_expression(
         obj["id"] = serde_json::Value::String(i.to_string());
     }
     obj.to_string()
+}
+
+/// 构造 lip_sync 请求 JSON。
+pub fn build_lip_sync(sample_hz: f32, samples: &[f32], start_delay_ms: u32) -> String {
+    serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "type": "lip_sync",
+        "sample_hz": sample_hz,
+        "samples": samples,
+        "start_delay_ms": start_delay_ms,
+    })
+    .to_string()
 }
 
 /// 构造 query 请求 JSON。

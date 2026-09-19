@@ -56,6 +56,9 @@ fn main() {
             #[cfg(not(windows))]
             eprintln!("ui mode only supported on windows");
         }
+        "tts-voices" => run_tts_voices(),
+        "envelope-test" => run_envelope_test(),
+        "provider-test" => run_provider_test(),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("unknown subcommand: {sub}");
@@ -72,6 +75,8 @@ fn print_help() {
     println!("  pet-agent chat [--provider mock|openai_compatible]");
     println!("  pet-agent once \"你好\" [--provider ...]");
     println!("  pet-agent ui [--provider ...]   # 常驻输入框 + 托盘 + 全局快捷键");
+    println!("  pet-agent tts-voices            # 列出系统可用 SAPI voice");
+    println!("  pet-agent provider-test         # 用配置的 Provider 发一次极短请求");
 }
 
 fn build_provider(cfg: &AgentConfig, override_name: Option<&str>) -> Box<dyn Provider> {
@@ -110,6 +115,76 @@ fn run_chat(provider_override: Option<&str>) {
         handle_turn(&*provider, &cfg, &mut ctx, text);
     }
     log_line("pet-agent exited");
+}
+
+/// 验证 envelope 算法（内部生成 tone，不播放）。
+fn run_envelope_test() {
+    use tts::audio::{envelope, AudioOutput};
+    // 生成 1 秒 440Hz 正弦（含静音段）
+    let sr = 16000u32;
+    let mut pcm = Vec::with_capacity(sr as usize);
+    for i in 0..sr {
+        let t = i as f32 / sr as f32;
+        let v = if t < 0.3 {
+            0.0
+        } else if t < 0.7 {
+            (t * 440.0 * 2.0 * std::f32::consts::PI).sin() * 0.8
+        } else {
+            0.0
+        };
+        pcm.push((v * 32767.0) as i16);
+    }
+    let audio = AudioOutput {
+        pcm_i16: pcm,
+        sample_rate: sr,
+        channels: 1,
+        bits_per_sample: 16,
+    };
+    let env = envelope(&audio, 30.0, 1.0, 0.02);
+    let n = env.len();
+    let max = env.iter().cloned().fold(0.0f32, f32::max);
+    let all_finite = env.iter().all(|v| v.is_finite());
+    let all_in_range = env.iter().all(|v| *v >= 0.0 && *v <= 1.0);
+    // 前段静音应接近 0
+    let head_quiet = env.first().map(|v| *v < 0.05).unwrap_or(false);
+    // 中段应有较大值
+    let mid_loud = env.iter().skip(n / 3).take(n / 3).any(|v| *v > 0.3);
+    println!("samples={n} max={max:.3} finite={all_finite} in_range={all_in_range} head_quiet={head_quiet} mid_loud={mid_loud}");
+}
+
+/// 列出系统可用 SAPI voice。
+fn run_tts_voices() {
+    let voices = tts::sapi::SapiProvider::list_voices();
+    if voices.is_empty() {
+        println!("no SAPI voices found");
+    } else {
+        println!("SAPI voices:");
+        for (name, desc) in voices {
+            println!("  {name}  ({desc})");
+        }
+    }
+}
+
+/// 用配置的 Provider 发一次极短请求（不发送到 DesktopPet）。
+fn run_provider_test() {
+    let cfg = AgentConfig::load();
+    let provider = build_provider(&cfg, None);
+    let msgs = vec![context::ChatMessage {
+        role: "system",
+        content: cfg.system_prompt.clone(),
+    }];
+    let started = std::time::Instant::now();
+    match provider.generate(&msgs, "只回复：测试成功") {
+        Ok(r) => {
+            println!("provider: {}", provider.name());
+            println!("model: {}", cfg.model);
+            println!("latency: {}ms", started.elapsed().as_millis());
+            println!("response: {r}");
+        }
+        Err(e) => {
+            println!("provider unavailable: {e}");
+        }
+    }
 }
 
 fn run_once(text: &str, provider_override: Option<&str>) {

@@ -34,6 +34,52 @@ pub struct AgentConfig {
     /// TTS 配置。
     #[serde(default)]
     pub tts: TtsConfig,
+    /// Lip sync 配置。
+    #[serde(default)]
+    pub lip_sync: LipSyncConfig,
+}
+
+/// Lip sync 配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LipSyncConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_sample_hz")]
+    pub sample_hz: f32,
+    #[serde(default = "default_rate")]
+    pub gain: f32,
+    #[serde(default = "default_noise_floor")]
+    pub noise_floor: f32,
+    #[serde(default = "default_attack")]
+    pub attack: f32,
+    #[serde(default = "default_release")]
+    pub release: f32,
+}
+
+fn default_sample_hz() -> f32 {
+    30.0
+}
+fn default_noise_floor() -> f32 {
+    0.02
+}
+fn default_attack() -> f32 {
+    0.7
+}
+fn default_release() -> f32 {
+    0.25
+}
+
+impl Default for LipSyncConfig {
+    fn default() -> Self {
+        LipSyncConfig {
+            enabled: true,
+            sample_hz: default_sample_hz(),
+            gain: default_rate(),
+            noise_floor: default_noise_floor(),
+            attack: default_attack(),
+            release: default_release(),
+        }
+    }
 }
 
 /// TTS 配置。默认 disabled，避免升级后突然出声。
@@ -117,8 +163,20 @@ impl Default for AgentConfig {
             bubble_max_chars: default_bubble_max(),
             log_conversation: false,
             tts: TtsConfig::default(),
+            lip_sync: LipSyncConfig::default(),
         }
     }
+}
+
+/// 进程级 lip_sync 开关（由 cfg 初始化，供 TTS worker 读取）。
+static LIP_SYNC_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_lip_sync_enabled(v: bool) {
+    LIP_SYNC_ENABLED.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn lip_sync_enabled() -> bool {
+    LIP_SYNC_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl AgentConfig {

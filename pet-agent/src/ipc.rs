@@ -33,6 +33,17 @@ pub fn query_status() -> Option<pet_protocol::StatusSnapshot> {
     serde_json::from_value(status.clone()).ok()
 }
 
+/// 公开的原始发送（供 lip_sync 等使用）。
+#[cfg(windows)]
+pub fn send_raw_pub(json: &str) -> Result<String, String> {
+    send_raw(json)
+}
+
+#[cfg(not(windows))]
+pub fn send_raw_pub(_json: &str) -> Result<String, String> {
+    Err("named pipe only supported on windows".into())
+}
+
 #[cfg(windows)]
 fn send_raw(json: &str) -> Result<String, String> {
     use windows::core::PCWSTR;

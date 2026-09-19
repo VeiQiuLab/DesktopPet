@@ -39,6 +39,29 @@ pub struct CharacterMeta {
     /// 角色专属台词（可选）。
     #[serde(default)]
     pub speech: SpeechMeta,
+    /// 语义参数映射（可选）。
+    #[serde(default)]
+    pub parameters: ParametersMeta,
+}
+
+/// 语义参数 → Cubism 参数 ID 映射。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParametersMeta {
+    /// 嘴型开合参数 ID。缺省使用 "ParamMouthOpenY"。
+    #[serde(default = "default_mouth_open")]
+    pub mouth_open: String,
+}
+
+fn default_mouth_open() -> String {
+    "ParamMouthOpenY".to_string()
+}
+
+impl Default for ParametersMeta {
+    fn default() -> Self {
+        ParametersMeta {
+            mouth_open: default_mouth_open(),
+        }
+    }
 }
 
 /// 角色专属台词配置。
@@ -291,5 +314,10 @@ impl CharacterPackage {
 
     pub fn speech(&self) -> &SpeechMeta {
         &self.meta.speech
+    }
+
+    /// 嘴型参数 ID。
+    pub fn mouth_param(&self) -> &str {
+        &self.meta.parameters.mouth_open
     }
 }

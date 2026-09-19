@@ -60,6 +60,48 @@ pub fn wake_existing() {
     }
 }
 
+/// 广播「打开记忆管理」。
+#[allow(dead_code)]
+pub fn broadcast_open_memory() {
+    broadcast_named("DesktopPetAgent_OpenMemory");
+}
+
+/// 广播「打开 Persona 管理」。
+#[allow(dead_code)]
+pub fn broadcast_open_persona() {
+    broadcast_named("DesktopPetAgent_OpenPersona");
+}
+
+/// 广播「退出 agent」。
+#[allow(dead_code)]
+pub fn broadcast_quit() {
+    broadcast_named("DesktopPetAgent_Quit");
+}
+
+pub fn named_message_id(name: &str) -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW;
+    unsafe {
+        let n: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        RegisterWindowMessageW(PCWSTR(n.as_ptr()))
+    }
+}
+
+#[allow(dead_code)]
+fn broadcast_named(name: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HWND_BROADCAST};
+    unsafe {
+        let msg = named_message_id(name);
+        if msg != 0 {
+            let _ = PostMessageW(
+                Some(HWND_BROADCAST),
+                msg,
+                Default::default(),
+                Default::default(),
+            );
+        }
+    }
+}
+
 /// 取得唤醒消息 ID。
 pub fn wake_message_id() -> u32 {
     use windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW;

@@ -50,6 +50,7 @@ struct UiContext {
     active_gen: Option<u64>,
     thinking: bool,
     wake_msg: u32,
+    #[allow(dead_code)]
     tray_added: bool,
     last_reply: String,
     provider_name: String,
@@ -173,7 +174,8 @@ pub fn run_ui(provider_override: Option<&str>) {
         });
 
         // 托盘 + 快捷键
-        setup_tray(hwnd);
+        // 托盘合并到 desktop-pet：agent 不再显示自己的托盘图标
+        // setup_tray(hwnd);
         setup_hotkey(hwnd);
 
         set_status(hwnd, &format!("{} · Ready", provider_status_label()));
@@ -228,6 +230,45 @@ fn switch_persona(id: &str) {
     log_line(&format!(
         "persona switched to '{id}' (conversation cleared, memory kept)"
     ));
+}
+
+/// Persona 选择（光标处弹出菜单）。
+unsafe fn open_persona_dialog(hwnd: HWND) {
+    let menu = CreatePopupMenu().unwrap_or_default();
+    let current = CTX.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|ctx| ctx.persona.id.clone())
+            .unwrap_or_default()
+    });
+    for (i, p) in crate::persona::scan().iter().enumerate() {
+        let mut flags = MF_STRING;
+        if p.id == current {
+            flags |= MF_CHECKED;
+        }
+        let label = wide_str(&format!("{} ({})", p.name, p.id));
+        let _ = AppendMenuW(menu, flags, i + 1, PCWSTR(label.as_ptr()));
+    }
+    let mut pt = windows::Win32::Foundation::POINT::default();
+    let _ = GetCursorPos(&mut pt);
+    let _ = SetForegroundWindow(hwnd);
+    let cmd = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        pt.x,
+        pt.y,
+        Some(0),
+        hwnd,
+        None,
+    );
+    let _ = DestroyMenu(menu);
+    let idx = cmd.0 as usize;
+    if idx >= 1 {
+        let personas = crate::persona::scan();
+        if let Some(p) = personas.get(idx - 1) {
+            switch_persona(&p.id);
+        }
+    }
 }
 
 fn provider_status_label() -> String {
@@ -307,6 +348,7 @@ unsafe fn setup_hotkey(hwnd: HWND) {
     }
 }
 
+#[allow(dead_code)]
 unsafe fn setup_tray(hwnd: HWND) {
     let mut nid = NOTIFYICONDATAW::default();
     nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -626,6 +668,31 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     if wake != 0 && msg == wake {
         focus_input(hwnd);
         return LRESULT(0);
+    }
+    // 由 desktop-pet 托盘广播的指令
+    {
+        static ONCE: std::sync::OnceLock<(u32, u32, u32)> = std::sync::OnceLock::new();
+        let ids = ONCE.get_or_init(|| {
+            (
+                single_instance::named_message_id("DesktopPetAgent_OpenMemory"),
+                single_instance::named_message_id("DesktopPetAgent_OpenPersona"),
+                single_instance::named_message_id("DesktopPetAgent_Quit"),
+            )
+        });
+        if ids.0 != 0 && msg == ids.0 {
+            if let Some(m) = open_memory() {
+                crate::memory_ui::show(m);
+            }
+            return LRESULT(0);
+        }
+        if ids.1 != 0 && msg == ids.1 {
+            open_persona_dialog(hwnd);
+            return LRESULT(0);
+        }
+        if ids.2 != 0 && msg == ids.2 {
+            let _ = DestroyWindow(hwnd);
+            return LRESULT(0);
+        }
     }
 
     match msg {

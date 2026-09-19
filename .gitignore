@@ -40,6 +40,7 @@ _launch_*.bat
 _l.bat
 _cli.bat
 _ui.bat
+_ollama.bat
 
 # 截图（调试用）
 screenshot*.png

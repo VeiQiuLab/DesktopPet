@@ -20,6 +20,10 @@ pub const CMD_TRAY_RESET: usize = 101;
 pub const CMD_TRAY_AUTOSTART: usize = 102;
 pub const CMD_TRAY_EXIT: usize = 103;
 pub const CMD_TRAY_TEST_BUBBLE: usize = 104;
+pub const CMD_TRAY_AI_INPUT: usize = 105;
+pub const CMD_TRAY_MEMORY: usize = 106;
+pub const CMD_TRAY_PERSONA: usize = 107;
+pub const CMD_TRAY_AGENT_EXIT: usize = 108;
 pub const CMD_CHAR_BASE: usize = 200;
 
 /// 系统托盘图标。Drop 时自动移除。
@@ -100,6 +104,11 @@ pub unsafe fn show_tray_menu(
     }
     append(menu, MF_POPUP, char_menu.0 as usize, "角色");
 
+    append(menu, MF_SEPARATOR, 0, "");
+    append(menu, MF_STRING, CMD_TRAY_AI_INPUT, "AI 输入框");
+    append(menu, MF_STRING, CMD_TRAY_MEMORY, "记忆管理");
+    append(menu, MF_STRING, CMD_TRAY_PERSONA, "Persona");
+    append(menu, MF_STRING, CMD_TRAY_AGENT_EXIT, "退出 Agent");
     append(menu, MF_SEPARATOR, 0, "");
     append(menu, MF_STRING, CMD_TRAY_TEST_BUBBLE, "测试气泡");
     append(menu, MF_STRING, CMD_TRAY_RESET, "重置位置");

@@ -79,9 +79,21 @@ fn attach_parent_console() {
 #[cfg(not(windows))]
 fn attach_parent_console() {}
 
+/// 父进程（desktop-pet）PID；0 表示无守护。
+pub static PARENT_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn parse_parent_pid(args: &[String]) {
+    if let Some(i) = args.iter().position(|a| a == "--parent-pid") {
+        if let Some(v) = args.get(i + 1).and_then(|s| s.parse::<u32>().ok()) {
+            PARENT_PID.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 fn main() {
     attach_parent_console();
     let args: Vec<String> = std::env::args().collect();
+    parse_parent_pid(&args);
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("chat");
 
     // --provider 覆盖

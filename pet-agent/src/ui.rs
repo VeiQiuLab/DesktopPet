@@ -68,6 +68,35 @@ struct UiContext {
     toast: Option<String>,
 }
 
+/// 守护父进程：等 desktop-pet 退出后自动退出本进程。
+fn spawn_parent_guard() {
+    let pid = crate::PARENT_PID.load(std::sync::atomic::Ordering::Relaxed);
+    if pid == 0 {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("parent-guard".into())
+        .spawn(move || unsafe {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::{
+                OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+            };
+            let h = match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+            // 阻塞直到父进程退出（含被强杀）
+            let _ = WaitForSingleObject(h, INFINITE);
+            let _ = CloseHandle(h);
+            crate::log_line("parent process exited, shutting down agent");
+            single_instance::broadcast_quit();
+            // 兜底：若广播未生效（例如窗口未创建），直接退出
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            std::process::exit(0);
+        })
+        .ok();
+}
+
 pub fn run_ui(provider_override: Option<&str>) {
     // panic hook：把 panic 写入日志，避免消息循环静默崩溃
     std::panic::set_hook(Box::new(|info| {
@@ -75,6 +104,7 @@ pub fn run_ui(provider_override: Option<&str>) {
     }));
     let cfg = AgentConfig::load();
     crate::config::set_lip_sync_enabled(cfg.lip_sync.enabled);
+    spawn_parent_guard();
     crate::tts::sapi::cleanup_temp();
     let pname = AiWorker::provider_name(&cfg, provider_override);
     let worker = AiWorker::start(cfg.clone(), provider_override.map(|s| s.to_string()));
@@ -115,15 +145,7 @@ pub fn run_ui(provider_override: Option<&str>) {
         // 现代外观：大圆角 + 亚克力玻璃背景
         apply_modern_style(hwnd);
 
-        let _ = SetWindowPos(
-            hwnd,
-            None,
-            200,
-            200,
-            380,
-            56,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        );
+        let _ = SetWindowPos(hwnd, None, 200, 200, 380, 56, SWP_NOZORDER | SWP_NOACTIVATE);
         create_controls(hwnd);
         // 深色主题字体
         {
@@ -770,7 +792,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         // 无边框窗口：按住空白处可拖动
         WM_LBUTTONDOWN => {
             let _ = ReleaseCapture();
-            let _ = SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as usize)), Some(LPARAM(0)));
+            let _ = SendMessageW(
+                hwnd,
+                WM_NCLBUTTONDOWN,
+                Some(WPARAM(HTCAPTION as usize)),
+                Some(LPARAM(0)),
+            );
             LRESULT(0)
         }
         WM_DRAWITEM => {
@@ -797,8 +824,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// 应用 Win11 现代外观：大圆角 + 亚克力玻璃背景。
 unsafe fn apply_modern_style(hwnd: HWND) {
     use windows::Win32::Graphics::Dwm::{
-        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE,
-        DWMWA_WINDOW_CORNER_PREFERENCE, DWMSBT_TRANSIENTWINDOW, DWMWCP_ROUND,
+        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW,
+        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     };
     use windows::Win32::UI::Controls::MARGINS;
     let round = DWMWCP_ROUND;

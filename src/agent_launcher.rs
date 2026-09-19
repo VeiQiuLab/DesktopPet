@@ -23,7 +23,11 @@ fn agent_exe() -> Option<std::path::PathBuf> {
     let mut root = dir.clone();
     root.pop(); // target
     root.pop(); // 项目根
-    let cand = root.join("pet-agent").join("target").join(&profile).join("pet-agent.exe");
+    let cand = root
+        .join("pet-agent")
+        .join("target")
+        .join(&profile)
+        .join("pet-agent.exe");
     if cand.is_file() {
         return Some(cand);
     }
@@ -42,6 +46,8 @@ pub fn launch_agent() {
     // 先探测是否已有实例（通过单实例互斥体名）
     match Command::new(&exe)
         .arg("ui")
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
     {

@@ -24,11 +24,23 @@ fn rgb(c: (u8, u8, u8)) -> COLORREF {
     COLORREF((c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16))
 }
 
-/// EDIT 背景色：暗中性灰，与外层深色玻璃融为一体（视觉上单层胶囊）。
+/// EDIT 背景色：与 BAR_BG 完全一致 → 无缝融合成单层观感。
 pub const GLASS_EDIT_BG: (u8, u8, u8) = (52, 55, 62);
 
 static mut BG_BRUSH: isize = 0;
 static mut EDIT_BRUSH: isize = 0;
+static mut BAR_BRUSH: isize = 0;
+
+/// 输入栏窗口背景色（暗中性灰，与 EDIT 一致 → 单层观感）。
+pub const BAR_BG: (u8, u8, u8) = (52, 55, 62);
+
+/// 输入栏窗口背景画刷（lazy）。
+pub unsafe fn bar_brush() -> HBRUSH {
+    if BAR_BRUSH == 0 {
+        BAR_BRUSH = CreateSolidBrush(rgb(BAR_BG)).0 as isize;
+    }
+    HBRUSH(BAR_BRUSH as *mut _)
+}
 
 /// EDIT 专用画刷（深色玻璃同色）。
 pub unsafe fn edit_brush() -> HBRUSH {

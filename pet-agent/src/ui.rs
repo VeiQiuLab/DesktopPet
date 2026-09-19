@@ -138,7 +138,8 @@ pub fn run_ui(provider_override: Option<&str>) {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
-            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()), // 不绘制，玻璃透出
+            // 深色背景画刷（LiquidGlass 停用后，由窗口自身负责绘制胶囊底色）
+            hbrBackground: crate::theme::bar_brush(),
             ..Default::default()
         };
         if RegisterClassExW(&wc) == 0 {
@@ -161,16 +162,10 @@ pub fn run_ui(provider_override: Option<&str>) {
         )
         .unwrap_or_default();
 
-        // LiquidGlass：真·液态玻璃（D3D11 模糊 + 折射 + 色散 + 边缘高光）
-        let lg_ok = crate::liquid_glass::init(hwnd.0 as *mut core::ffi::c_void, BAR_W, BAR_H);
-        if lg_ok {
-            let style = crate::liquid_glass::GlassStyle::default();
-            crate::liquid_glass::config(&style);
-            crate::log_line("LiquidGlass initialized");
-        } else {
-            crate::log_line("LiquidGlass init FAILED, falling back to DWM");
-            apply_modern_style(hwnd);
-        }
+        // LiquidGlass 已停用（交互稳定性优先）。
+        // 用 DWM 系统亚克力 + 窗口自绘深色背景画刷作为胶囊外观。
+        apply_modern_style(hwnd);
+        crate::log_line("glass: DWM acrylic (LiquidGlass disabled for input stability)");
 
         let _ = SetWindowPos(hwnd, None, 200, 200, BAR_W, BAR_H, SWP_NOZORDER | SWP_NOACTIVATE);
         // 胶囊裁剪：圆角外不显示
@@ -192,10 +187,6 @@ pub fn run_ui(provider_override: Option<&str>) {
             if let Ok(c) = GetDlgItem(Some(hwnd), id) {
                 crate::theme::apply_font(c, font);
             }
-        }
-        // 窗口定位后再捕获桌面背景（供玻璃折射）
-        if crate::liquid_glass::ok() {
-            crate::liquid_glass::capture_behind(hwnd.0 as *mut core::ffi::c_void, 40);
         }
 
         CTX.with(|c| {
@@ -225,89 +216,25 @@ pub fn run_ui(provider_override: Option<&str>) {
 
         set_status(hwnd, &format!("{} · Ready", provider_status_label()));
 
-        // 轮询 worker 结果的定时器（每 100ms）
+        // 轮询 worker 结果 + 跟随桌宠（定时器驱动，避免无变化的每帧移动）
         let _ = SetTimer(Some(hwnd), POLL_TIMER_ID, 100, None);
+        const FOLLOW_TIMER_ID: usize = 2;
+        let _ = SetTimer(Some(hwnd), FOLLOW_TIMER_ID, 50, None);
 
         // 初始显示 + 首次锚定
         let _ = ShowWindow(hwnd, SW_SHOW);
         position_near_pet(hwnd);
-        // 定位完成后再捕获桌面背景（供玻璃折射真实桌面）
-        let mut last_capture_pos: Option<(i32, i32)> = None;
-        let mut last_capture_at: Option<std::time::Instant> = None;
-        if crate::liquid_glass::ok() {
-            crate::liquid_glass::capture_behind(hwnd.0 as *mut core::ffi::c_void, 40);
-            let mut r = windows::Win32::Foundation::RECT::default();
-            if GetWindowRect(hwnd, &mut r).is_ok() {
-                last_capture_pos = Some((r.left, r.top));
-            }
-        }
 
-        // 每帧渲染 LiquidGlass
-        if crate::liquid_glass::ok() {
-            let mut msg = MSG::default();
-            loop {
-                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                    if msg.message == WM_QUIT {
-                        break;
-                    }
-                    let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&mut msg);
-                }
-                if msg.message == WM_QUIT {
-                    break;
-                }
-                // 每帧跟随桌宠（正下方 + 居中 + 隐藏同步）
-                position_near_pet(hwnd);
-                // 位置变化 → 重新捕获背景（节流 300ms，避免高频闪动）
-                if crate::liquid_glass::ok() {
-                    let mut wr = windows::Win32::Foundation::RECT::default();
-                    if GetWindowRect(hwnd, &mut wr).is_ok() {
-                        let cur = (wr.left, wr.top);
-                        let need = match last_capture_pos {
-                            Some(p) => p != cur,
-                            None => true,
-                        };
-                        let due = match last_capture_at {
-                            Some(t) => t.elapsed().as_millis() >= 300,
-                            None => true,
-                        };
-                        if need && due {
-                            crate::liquid_glass::capture_behind(
-                                hwnd.0 as *mut core::ffi::c_void,
-                                40,
-                            );
-                            last_capture_pos = Some(cur);
-                            last_capture_at = Some(std::time::Instant::now());
-                        }
-                    }
-                }
-                // 整窗玻璃（内缩 1px 留边）
-                crate::liquid_glass::render_frame(
-                    BAR_W,
-                    BAR_H,
-                    1.0,
-                    1.0,
-                    (BAR_W - 2) as f32,
-                    (BAR_H - 2) as f32,
-                );
-                // D3D Present 会覆盖子控件 → 每帧强制重绘 EDIT / 发送键
-                use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
-                if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT) {
-                    let _ = InvalidateRect(Some(edit), None, false);
-                    let _ = UpdateWindow(edit);
-                }
-                if let Ok(send) = GetDlgItem(Some(hwnd), ID_SEND) {
-                    let _ = InvalidateRect(Some(send), None, false);
-                    let _ = UpdateWindow(send);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(16));
-            }
-        } else {
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&mut msg);
-            }
+        // 【功能优先】LiquidGlass 已停用。原因：
+        //   1) capture_behind 需周期性 Hide/Show 窗口 → 破坏 EDIT focus / IME / caret
+        //   2) 每帧 D3D present + InvalidateRect → 持续闪烁
+        // 恢复稳定输入后，再单独设计不干扰窗口生命周期的 Glass Renderer。
+
+        // 标准消息循环（无每帧重绘）
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&mut msg);
         }
 
         remove_tray(hwnd);
@@ -469,6 +396,60 @@ unsafe fn create_controls(hwnd: HWND, font: windows::Win32::Graphics::Gdi::HGDIO
         Some(hinst),
         None,
     );
+
+    // 子类化 EDIT：ES_WANTRETURN 会吞掉 Enter；用子类拦截 Enter（无 Shift）→ 通知父窗口发送。
+    if let Ok(edit) = GetDlgItem(Some(hwnd), ID_EDIT) {
+        use windows::Win32::UI::Shell::SetWindowSubclass;
+        let _ = SetWindowSubclass(edit, Some(edit_subclass_proc), 1, hwnd.0 as usize);
+    }
+}
+
+/// 父窗口收到此消息 → 发送（由 EDIT 子类转发的 Enter）。
+const WM_APP_EDIT_ENTER: u32 = WM_APP + 1;
+
+unsafe extern "system" fn edit_subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _uid: usize,
+    ref_data: usize,
+) -> LRESULT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+    use windows::Win32::UI::Shell::DefSubclassProc;
+
+    match msg {
+        WM_KEYDOWN => {
+            let vk = wparam.0 as u32;
+            if vk == 0x0D {
+                // Enter
+                let shift = GetKeyState(0x10) < 0; // VK_SHIFT
+                if !shift {
+                    // 通知父窗口发送；不返回，让 EDIT 也吃不到（返回 0 阻止默认 beep）
+                    if ref_data != 0 {
+                        let parent = HWND(ref_data as *mut _);
+                        let _ = PostMessageW(
+                            Some(parent),
+                            WM_APP_EDIT_ENTER,
+                            WPARAM(0),
+                            LPARAM(0),
+                        );
+                    }
+                    return LRESULT(0);
+                }
+                // Shift+Enter → 交给 EDIT 默认处理（换行）
+            } else if vk == 0x1B {
+                // Esc → 隐藏父窗口
+                if ref_data != 0 {
+                    let parent = HWND(ref_data as *mut _);
+                    let _ = ShowWindow(parent, SW_HIDE);
+                }
+                return LRESULT(0);
+            }
+        }
+        _ => {}
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 unsafe fn setup_hotkey(hwnd: HWND) {
@@ -544,31 +525,22 @@ unsafe fn toggle_send_button(hwnd: HWND, thinking: bool) {
 // IPC 查询有开销，节流到 100ms；可见性/窗口用轻量 Win32 查询。
 thread_local! {
     static LAST_BOUNDS: RefCell<Option<(std::time::Instant, [i32; 4])>> = RefCell::new(None);
+    /// 上次 SetWindowPos 的目标位置，避免对未变化的窗口反复移动（闪烁 / 焦点抖动）。
+    static LAST_MOVED_POS: RefCell<Option<(i32, i32)>> = RefCell::new(None);
 }
 
 unsafe fn position_near_pet(hwnd: HWND) {
     const W: i32 = BAR_W;
-    const H: i32 = BAR_H;
 
     let pet = FindWindowW(w!("DesktopPetWindow"), None).unwrap_or_default();
     if pet.0.is_null() {
-        // 桌宠不存在：输入栏停在鼠标处
-        let mut pt = windows::Win32::Foundation::POINT::default();
-        let _ = GetCursorPos(&mut pt);
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            pt.x - W / 2,
-            pt.y - H / 2,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-        );
         return;
     }
-    // 桌宠隐藏 → 输入条同步隐藏
+    // 桌宠隐藏 → 输入条同步隐藏（仅当当前可见时）
     if !IsWindowVisible(pet).as_bool() {
-        let _ = ShowWindow(hwnd, SW_HIDE);
+        if IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
         return;
     }
 
@@ -604,6 +576,14 @@ unsafe fn position_near_pet(hwnd: HWND) {
     // 水平居中于可见角色；顶部 = 可见底部 + GAP
     let x = l + (r - l) / 2 - W / 2;
     let y = b - BOTTOM_VERTEX_PAD + GAP_PET;
+
+    // 位置未变化 → 不移动（避免每帧 SetWindowPos → 闪烁 / 焦点丢失）
+    let same = LAST_MOVED_POS.with(|c| {
+        c.borrow().map(|(px, py)| px == x && py == y).unwrap_or(false)
+    });
+    if same {
+        return;
+    }
     let _ = SetWindowPos(
         hwnd,
         Some(HWND_TOPMOST),
@@ -611,8 +591,9 @@ unsafe fn position_near_pet(hwnd: HWND) {
         y,
         0,
         0,
-        SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
     );
+    LAST_MOVED_POS.with(|c| *c.borrow_mut() = Some((x, y)));
 }
 
 unsafe fn focus_input(hwnd: HWND) {
@@ -946,7 +927,26 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_TIMER => {
-            poll_results(hwnd);
+            match wparam.0 {
+                2 => {
+                    // 50ms 跟随定时器（position_near_pet 内部跳过无变化的移动）
+                    position_near_pet(hwnd);
+                }
+                _ => {
+                    poll_results(hwnd);
+                }
+            }
+            LRESULT(0)
+        }
+        x if x == WM_APP_EDIT_ENTER => {
+            // EDIT 子类转发：Enter（无 Shift）→ 发送
+            let thinking =
+                CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.thinking).unwrap_or(false));
+            if thinking {
+                cancel_current(hwnd);
+            } else {
+                send_current(hwnd);
+            }
             LRESULT(0)
         }
         // 无边框窗口：按住空白处可拖动

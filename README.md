@@ -89,5 +89,30 @@ DesktopPet/
 - 删除整个 `DesktopPet` 目录
 
 ## 许可
+MIT License
 
-Live2D Cubism SDK 使用受 Live2D Proprietary Software License 约束；角色模型版权归各自作者所有。本项目源码供个人使用。
+Copyright (c) 2026 VeiQiuLab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## License
+
+本项目自有代码采用 [MIT License](LICENSE)。
+
+Live2D Cubism SDK、默认角色资源及其他第三方内容不属于本 MIT License 授权范围，其使用需遵守各自的许可条款。

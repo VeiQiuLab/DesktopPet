@@ -253,5 +253,108 @@ shake_probability、action_cooldown、min_interval。
 
 ## 13. 未纳入（明确延后）
 
-AI / Persona / Memory / LLM / TTS / ASR、文字气泡、自动走路、跨屏行走、
+AI / Persona / Memory / LLM / TTS / ASR、自动走路、跨屏行走、
 情绪系统、网络、在线下载角色、插件系统、自动更新器、GPU 大规模重构。
+
+---
+
+## 14. Presentation / Expression Layer（第五阶段）
+
+### 14.1 边界
+
+```
+External Source / Future AI
+  → PetExpression
+  → PresentationController
+      ├── Speech Bubble  (platform::bubble)
+      ├── Motion / Behavior (behavior::PetAction → Scheduler → Cubism)
+      └── Future Facial Expression
+```
+
+未来 AI 只提交 `PetExpression`，不接触 HWND / Cubism / D3D11 / 气泡窗口。
+动作仍走 Behavior → Scheduler → Character → Cubism，不绕过。
+
+### 14.2 PetExpression schema
+
+```rust
+enum PetExpression {
+    Text { text, priority, duration: Option<f32> },
+    Motion { action: PetAction, priority },
+    TextAndMotion { text, action, priority, duration },
+}
+enum Priority { Idle = 0, System = 1, User = 2 }
+```
+
+便捷构造：`PetExpression::user_text("...")`（Priority::User）。
+公开入口：`App::submit_expression(&mut presentation, text)`（预留，未接输入）。
+
+### 14.3 Bubble Window 架构
+
+- 独立 **Win32 layered window**（`WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW |
+  WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`），类名 `DesktopPetBubble`。
+- 鼠标穿透（`WM_NCHITTEST → HTTRANSPARENT`），不抢焦点、不进任务栏。
+- 逐像素 alpha：32 位 DIB + `UpdateLayeredWindow(ULW_ALPHA)`。
+- 文本渲染：GDI 在临时 DIB 上绘制白色文字得灰度蒙版 → Rust 侧按蒙版把文字色
+  混合进气泡背景（预乘 BGRA）。字体 Microsoft YaHei UI，圆角深色半透明背景。
+
+### 14.4 文本布局
+
+- `DrawTextW` + `DT_CALCRECT | DT_WORDBREAK` 测量换行后的尺寸。
+- 最大宽度 `MAX_WIDTH=320`（按 DPI 缩放），内边距 12px，圆角半径 10px。
+- 尺寸 = 文本尺寸 + 2×padding；超长文本自动换行。
+
+### 14.5 定位与多显示器
+
+- `compute_position` 基于桌宠窗口矩形：优先上方偏右。
+- 用 `MonitorFromWindow(MONITOR_DEFAULTTONEAREST)` + `GetMonitorInfoW`
+  取**桌宠所在显示器**的 work area（排除任务栏），越界时自动翻转/钳制。
+- 气泡移动随桌宠窗口（每帧 `reposition`）。
+
+### 14.6 Message queue / priority
+
+- 硬上限 `MAX_QUEUE=8`；同优先级重复文本去重；高优先级覆盖低优先级待机表达。
+- 展示时长 `estimate_duration`：约 1.5s + 字符数/5，钳制 [2, 12] 秒。
+- 新文本到来时替换（单气泡，不无限排队）。
+
+### 14.7 Character speech schema
+
+```json
+"speech": {
+  "greeting": "你好呀…",
+  "idle": ["……", "还在。"],
+  "click": ["嗯？"],
+  "double_click": ["不要晃我……"],
+  "click_speech_probability": 0.5,
+  "double_click_speech_probability": 0.7,
+  "idle_speech_interval_min": 60.0,
+  "idle_speech_interval_max": 180.0,
+  "idle_speech_suppress_after_interaction": 20.0
+}
+```
+
+全部字段可选，缺失用默认值。
+
+### 14.8 Idle speech 调度
+
+- 间隔默认 60–180 秒（明显长于动作间隔）。
+- 用户交互后抑制 20 秒不弹闲话（`suppress_until`）。
+- 隐藏状态、拖拽、菜单打开时不弹。
+- 每次 tick 递减 `idle_next_in`，到点从 `idle` 池随机取句。
+
+### 14.9 DPI
+
+- 进程级 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`（main 最早期）。
+- 气泡字体高度 = `FONT_PT × dpi / 72`，最大宽度按 dpi 缩放，`GetDpiForWindow` 取当前值。
+
+### 14.10 Character Package 路径安全
+
+- `model3` 必须为**相对路径**，且**禁止含 `..`**（防止逃逸角色根目录读取任意文件）。
+- 违规角色包在 `CharacterPackage::load` 返回 Err，`CharacterManager::scan` 跳过并记录。
+- 第四阶段的测试角色 `characters/alt`（用 `..` 引用 default 模型）已**移除**。
+
+### 14.11 已知技术债（第五阶段）
+
+- 气泡内容不被 `CopyFromScreen` 捕获（DWM layered 层），验证靠像素回读。
+- 气泡不支持富文本 / 按钮 / 图标。
+- Idle speech 池较小（default 仅 4 句）。
+- `App::submit_expression` 尚未接线到任何外部输入源（预留给未来 AI）。

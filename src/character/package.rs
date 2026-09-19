@@ -36,6 +36,57 @@ pub struct CharacterMeta {
     /// 行为参数。
     #[serde(default)]
     pub behavior: BehaviorMeta,
+    /// 角色专属台词（可选）。
+    #[serde(default)]
+    pub speech: SpeechMeta,
+}
+
+/// 角色专属台词配置。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpeechMeta {
+    /// 启动问候语（可选）。
+    #[serde(default)]
+    pub greeting: Option<String>,
+    /// 空闲台词池。
+    #[serde(default)]
+    pub idle: Vec<String>,
+    /// 单击台词池。
+    #[serde(default)]
+    pub click: Vec<String>,
+    /// 双击台词池。
+    #[serde(default)]
+    pub double_click: Vec<String>,
+    /// 单击时说话的频率（0..1）。
+    #[serde(default = "default_click_speech_prob")]
+    pub click_speech_probability: f32,
+    /// 双击时说话的频率（0..1）。
+    #[serde(default = "default_double_click_speech_prob")]
+    pub double_click_speech_probability: f32,
+    /// 空闲台词间隔下限（秒）。
+    #[serde(default = "default_idle_speech_min")]
+    pub idle_speech_interval_min: f32,
+    /// 空闲台词间隔上限（秒）。
+    #[serde(default = "default_idle_speech_max")]
+    pub idle_speech_interval_max: f32,
+    /// 用户交互后抑制空闲台词的时长（秒）。
+    #[serde(default = "default_idle_speech_suppress")]
+    pub idle_speech_suppress_after_interaction: f32,
+}
+
+fn default_click_speech_prob() -> f32 {
+    0.4
+}
+fn default_double_click_speech_prob() -> f32 {
+    0.6
+}
+fn default_idle_speech_min() -> f32 {
+    60.0
+}
+fn default_idle_speech_max() -> f32 {
+    180.0
+}
+fn default_idle_speech_suppress() -> f32 {
+    20.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,11 +223,20 @@ impl CharacterPackage {
             return Err("character.json: id is empty".to_string());
         }
 
-        // model3 路径存在
+        // model3 路径存在（禁止绝对路径与 .. 越出角色根）
         let model3_rel = PathBuf::from(&meta.model.model3);
         if model3_rel.is_absolute() {
             return Err(format!(
                 "character.json: model3 must be relative, got {}",
+                meta.model.model3
+            ));
+        }
+        if model3_rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!(
+                "character.json: model3 must not contain '..' (path escape): {}",
                 meta.model.model3
             ));
         }
@@ -227,5 +287,9 @@ impl CharacterPackage {
 
     pub fn idle_behavior(&self) -> &IdleBehavior {
         &self.meta.behavior.idle
+    }
+
+    pub fn speech(&self) -> &SpeechMeta {
+        &self.meta.speech
     }
 }

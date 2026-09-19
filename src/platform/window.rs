@@ -12,7 +12,10 @@ use std::time::Instant;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ScreenToClient, UpdateWindow};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, ScreenToClient, UpdateWindow, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -427,6 +430,37 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// 桌宠窗口的屏幕矩形（供气泡定位）。
+pub unsafe fn pet_rect(hwnd: HWND) -> Option<RECT> {
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_ok() {
+        Some(rect)
+    } else {
+        None
+    }
+}
+
+/// 桌宠所在显示器的工作区（排除任务栏）。
+pub unsafe fn monitor_work_area(hwnd: HWND) -> Option<crate::presentation::controller::Rect> {
+    let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if hmon.0.is_null() {
+        return None;
+    }
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !GetMonitorInfoW(hmon, &mut mi).as_bool() {
+        return None;
+    }
+    Some(crate::presentation::controller::Rect {
+        left: mi.rcWork.left,
+        top: mi.rcWork.top,
+        right: mi.rcWork.right,
+        bottom: mi.rcWork.bottom,
+    })
 }
 
 /// 切换窗口可见性。

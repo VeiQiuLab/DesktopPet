@@ -24,5 +24,26 @@
       "action_cooldown": 2.0,
       "min_interval": 2.0
     }
+  },
+  "speech": {
+    "greeting": "你好呀，我是你的桌面伙伴。今天也要加油哦！",
+    "idle": [
+      "……",
+      "还在。",
+      "嗯？",
+      "今天也很安静。"
+    ],
+    "click": [
+      "嗯？",
+      "怎么了？"
+    ],
+    "double_click": [
+      "不要晃我……"
+    ],
+    "click_speech_probability": 0.5,
+    "double_click_speech_probability": 0.7,
+    "idle_speech_interval_min": 60.0,
+    "idle_speech_interval_max": 180.0,
+    "idle_speech_suppress_after_interaction": 20.0
   }
 }

@@ -19,6 +19,7 @@ use crate::platform::gfx::Gfx;
 use crate::platform::window::{
     create_window, is_dragging, is_menu_open, set_active_character, set_model, WindowParams,
 };
+use crate::presentation::{PetExpression, PresentationController};
 
 const LOOK_RADIUS: f32 = 1.5;
 const FRAME_MS: u64 = 16;
@@ -80,17 +81,22 @@ impl App {
 
             let mut model: Option<CubismModel> = None;
             let mut behavior: Option<BehaviorController> = None;
+            let mut presentation: Option<PresentationController> = None;
 
             if let Some(pkg) = manager.resolve_active(&resolved_id) {
                 let idle = pkg.idle_behavior().clone();
                 model = Self::init_model(&gfx, pkg, win_w, win_h);
                 behavior = Some(BehaviorController::new(idle));
+                presentation = Some(PresentationController::new(pkg));
             } else {
                 log_line("no character available");
             }
 
             if let Some(m) = &model {
                 set_model(hwnd, m.raw_handle());
+            }
+            if let Some(p) = presentation.as_mut() {
+                p.greet();
             }
 
             let mut last = Instant::now();
@@ -112,13 +118,14 @@ impl App {
 
                 let visible = IsWindowVisible(hwnd).as_bool();
 
-                // 处理事件（角色切换 / 行为）
+                // 处理事件（角色切换 / 行为 / 气泡反馈）
                 self.process_events(
                     hwnd,
                     &gfx,
                     &manager,
                     &mut model,
                     &mut behavior,
+                    &mut presentation,
                     win_w,
                     win_h,
                     &mut quit,
@@ -127,11 +134,13 @@ impl App {
                     break 'running;
                 }
 
+                let blocked = is_dragging(hwnd) || is_menu_open(hwnd);
+
                 if visible {
                     if let (Some(b), Some(m)) = (behavior.as_mut(), model.as_ref()) {
                         let ctx = TickContext {
                             is_motion_busy: m.is_busy(),
-                            interaction_blocked: is_dragging(hwnd) || is_menu_open(hwnd),
+                            interaction_blocked: blocked,
                         };
                         if let Some(action) = b.tick(dt, &ctx) {
                             match action {
@@ -145,6 +154,17 @@ impl App {
                                 }
                             }
                         }
+                    }
+
+                    // Presentation：气泡生命周期 + idle speech；返回的动作交给 Behavior 执行
+                    if let Some(p) = presentation.as_mut() {
+                        if let Some(action) = p.tick_at(dt, visible, blocked, hwnd) {
+                            if let Some(m) = model.as_ref() {
+                                let active_id = self.config.character.active_character.clone();
+                                Self::apply_motion(m, action, &manager, &active_id);
+                            }
+                        }
+                        p.reposition(hwnd);
                     }
 
                     if let Some(m) = &model {
@@ -165,6 +185,10 @@ impl App {
 
                     Self::sleep_remaining(now, FRAME_MS);
                 } else {
+                    // 隐藏：暂停 idle speech，隐藏气泡
+                    if let Some(p) = presentation.as_mut() {
+                        let _ = p.tick(0.0, false, true);
+                    }
                     Self::sleep_remaining(now, HIDDEN_FRAME_MS);
                 }
             }
@@ -211,6 +235,7 @@ impl App {
         manager: &CharacterManager,
         model: &mut Option<CubismModel>,
         behavior: &mut Option<BehaviorController>,
+        presentation: &mut Option<PresentationController>,
         win_w: i32,
         win_h: i32,
         quit: &mut bool,
@@ -225,6 +250,30 @@ impl App {
         for ev in events {
             match ev {
                 PetEvent::TraySwitchCharacter(id) => switch_to = Some(id),
+                PetEvent::LeftClick => {
+                    if let Some(p) = presentation.as_mut() {
+                        p.on_click();
+                    }
+                    if let Some(b) = behavior.as_mut() {
+                        b.handle(PetEvent::LeftClick);
+                    }
+                }
+                PetEvent::DoubleClick => {
+                    if let Some(p) = presentation.as_mut() {
+                        p.on_double_click();
+                    }
+                    if let Some(b) = behavior.as_mut() {
+                        b.handle(PetEvent::DoubleClick);
+                    }
+                }
+                PetEvent::DragStart => {
+                    if let Some(p) = presentation.as_mut() {
+                        p.on_interaction();
+                    }
+                    if let Some(b) = behavior.as_mut() {
+                        b.handle(PetEvent::DragStart);
+                    }
+                }
                 other => {
                     if let Some(b) = behavior.as_mut() {
                         b.handle(other);
@@ -240,6 +289,7 @@ impl App {
                 manager,
                 model,
                 behavior,
+                presentation,
                 win_w,
                 win_h,
                 &new_id,
@@ -247,6 +297,14 @@ impl App {
             );
         }
         let _ = quit;
+    }
+
+    /// 供未来 AI / 外部源提交表达。当前未接线到主循环输入，仅作为公开接口预留。
+    #[allow(dead_code)]
+    pub fn submit_expression(presentation: &mut Option<PresentationController>, text: &str) {
+        if let Some(p) = presentation.as_mut() {
+            let _ = p.present(PetExpression::user_text(text));
+        }
     }
 
     fn apply_motion(
@@ -280,6 +338,7 @@ impl App {
         manager: &CharacterManager,
         model: &mut Option<CubismModel>,
         behavior: &mut Option<BehaviorController>,
+        presentation: &mut Option<PresentationController>,
         win_w: i32,
         win_h: i32,
         new_id: &str,
@@ -305,6 +364,11 @@ impl App {
                 match behavior.as_mut() {
                     Some(b) => b.set_idle(idle),
                     None => *behavior = Some(BehaviorController::new(idle)),
+                }
+                // 更新 Presentation 的台词配置并清空旧气泡
+                match presentation.as_mut() {
+                    Some(p) => p.set_character(pkg),
+                    None => *presentation = Some(PresentationController::new(pkg)),
                 }
                 *model = Some(m);
                 config.character.active_character = new_id.to_string();

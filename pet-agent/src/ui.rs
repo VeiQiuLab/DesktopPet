@@ -99,11 +99,11 @@ pub fn run_ui(provider_override: Option<&str>) {
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class,
             w!("DesktopPet Agent"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            WS_POPUP,
             200,
             200,
-            380,
-            150,
+            420,
+            120,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -129,8 +129,8 @@ pub fn run_ui(provider_override: Option<&str>) {
             None,
             200,
             200,
-            380,
-            150,
+            420,
+            120,
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
         create_controls(hwnd);
@@ -144,7 +144,7 @@ pub fn run_ui(provider_override: Option<&str>) {
                     d
                 }
             };
-            let font = crate::theme::create_font(dpi, 11);
+            let font = crate::theme::create_font(dpi, 12);
             for id in [ID_EDIT, ID_SEND, ID_STATUS] {
                 if let Ok(c) = GetDlgItem(Some(hwnd), id) {
                     crate::theme::apply_font(c, font);
@@ -246,49 +246,49 @@ unsafe fn create_controls(hwnd: HWND) {
 
     // EDIT（多行）
     let _ = CreateWindowExW(
-        WS_EX_CLIENTEDGE,
+        WINDOW_EX_STYLE(0),
         w!("EDIT"),
         w!(""),
         WS_CHILD
             | WS_VISIBLE
             | WS_TABSTOP
             | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN) as u32),
-        10,
-        10,
+        16,
+        16,
         340,
-        70,
+        60,
         Some(hwnd),
         Some(HMENU(ID_EDIT as isize as *mut _)),
         Some(hinst),
         None,
     );
 
-    // 发送按钮
+    // 圆形发送键（右下角，owner-draw）
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("BUTTON"),
-        w!("发送 (Enter)"),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-        10,
-        86,
-        120,
-        28,
+        w!("↑"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
+        368,
+        60,
+        36,
+        36,
         Some(hwnd),
         Some(HMENU(ID_SEND as isize as *mut _)),
         Some(hinst),
         None,
     );
 
-    // 状态文字
+    // 状态控件（隐藏：仅内部用于反馈，不显示技术信息）
     let _ = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("STATIC"),
         w!(""),
-        WS_CHILD | WS_VISIBLE,
-        140,
-        92,
-        220,
-        20,
+        WS_CHILD,
+        0,
+        0,
+        0,
+        0,
         Some(hwnd),
         Some(HMENU(ID_STATUS as isize as *mut _)),
         Some(hinst),
@@ -370,8 +370,8 @@ unsafe fn position_near_pet(hwnd: HWND) {
     let (x, y) = match pet {
         Some(s) if s.online => {
             let [l, t, r, b] = s.window_rect;
-            let w = 380;
-            let h = 150;
+            let w = 480;
+            let h = 240;
             // 优先桌宠上方
             let mut x = l + (r - l) / 2 - w / 2;
             let mut y = t - h - 8;
@@ -710,6 +710,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             poll_results(hwnd);
             LRESULT(0)
         }
+        WM_DRAWITEM => {
+            draw_send_button(lparam);
+            LRESULT(1)
+        }
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX | WM_CTLCOLOREDIT => {
             crate::theme::on_ctlcolor(hwnd, msg, wparam)
         }
@@ -727,6 +731,34 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 /// 字符串 → nul 结尾 UTF-16。
+/// 自绘圆形发送键。
+unsafe fn draw_send_button(lparam: LPARAM) {
+    use windows::Win32::Graphics::Gdi::{
+        CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, SelectObject, SetBkMode, SetTextColor,
+        HGDIOBJ, TRANSPARENT,
+    };
+    use windows::Win32::UI::Controls::DRAWITEMSTRUCT;
+    let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
+    let hdc = dis.hDC;
+    let r = dis.rcItem;
+    let bg = windows::Win32::Foundation::COLORREF(0x00c08050);
+    let brush = CreateSolidBrush(bg);
+    let old = SelectObject(hdc, HGDIOBJ(brush.0));
+    let _ = Ellipse(hdc, r.left, r.top, r.right, r.bottom);
+    let _ = SelectObject(hdc, old);
+    let _ = DeleteObject(HGDIOBJ(brush.0));
+    let _ = SetBkMode(hdc, TRANSPARENT);
+    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x00FFFFFF));
+    let mut t: Vec<u16> = "↑".encode_utf16().collect();
+    let mut rc = r;
+    let _ = DrawTextW(
+        hdc,
+        &mut t,
+        &mut rc,
+        windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT(0x25),
+    );
+}
+
 fn wide_str(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }

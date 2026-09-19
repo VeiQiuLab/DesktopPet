@@ -131,6 +131,9 @@ impl Provider for OpenAiCompatibleProvider {
             "model": self.model,
             "messages": msgs,
             "stream": false,
+            "max_tokens": 1024,
+            // 关闭推理模型的 thinking（Ollama 扩展；不支持的实现会忽略）
+            "think": false,
         });
 
         let agent = ureq::AgentBuilder::new()

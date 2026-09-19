@@ -50,6 +50,14 @@ Persona System Prompt 永远高于 memory（防 prompt injection）。
 
 无 Embedding。规则：pinned 优先 + keyword 匹配 + recency；`max=12 条 / max=1200 字符`（context budget）。
 
+## Memory Manager UI（第十三阶段）
+
+Agent Tray → 「记忆管理 (N 待确认)」打开原生 Win32 窗口：
+- 视图：已保存 / 待确认 / 已删除 / 变更记录
+- 操作：编辑(source=user_ui) / 删除(soft, 带确认) / Pin / Unpin / 恢复 / 接受 / 拒绝 / 导出 / 备份
+- 搜索（content 子串）+ kind 过滤
+- 关闭 = 隐藏（不退出 agent），复用同一窗口
+
 ## CLI
 
 ```
@@ -58,6 +66,11 @@ pet-agent memory pending
 pet-agent memory accept <id>
 pet-agent memory reject <id>
 pet-agent memory delete <id>
+pet-agent memory restore <id>
+pet-agent memory pin <id>
+pet-agent memory unpin <id>
+pet-agent memory deleted
+pet-agent memory retrieve <q>
 pet-agent memory export
 pet-agent memory import <file.json>
 pet-agent memory backup
@@ -77,6 +90,8 @@ DB 打不开 / migration 失败 → `memory unavailable`，AI 退化为**无记�
 ## 未来 Memory V2 扩展点
 
 - Embedding / 向量检索（替换 retrieval V1）
-- pending 确认 UI（当前以 CLI 为主）
-- import（当前 export 已就绪）
-- 多 Persona 切换
+- 每 Persona 独立 Memory（当前跨 Persona 共用）
+- UI 内 import 文件选择器
+- Prompt Preview / retrieve 诊断 UI
+
+

@@ -89,7 +89,7 @@ pub fn run_ui(provider_override: Option<&str>) {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: class,
-            hbrBackground: crate::theme::bg_brush(),
+            hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(std::ptr::null_mut()), // 透明
             ..Default::default()
         };
         if RegisterClassExW(&wc) == 0 {
@@ -103,8 +103,8 @@ pub fn run_ui(provider_override: Option<&str>) {
             WS_POPUP,
             200,
             200,
-            420,
-            120,
+            380,
+            56,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -112,26 +112,16 @@ pub fn run_ui(provider_override: Option<&str>) {
         )
         .unwrap_or_default();
 
-        // 诊断：确认创建时的实际尺寸
-        {
-            let mut rc = windows::Win32::Foundation::RECT::default();
-            let _ = GetWindowRect(hwnd, &mut rc);
-            log_line(&format!(
-                "window created: {}x{} at ({},{})",
-                rc.right - rc.left,
-                rc.bottom - rc.top,
-                rc.left,
-                rc.top
-            ));
-        }
-        // 强制目标尺寸（不激活、不改 Z 序）
+        // 现代外观：大圆角 + 亚克力玻璃背景
+        apply_modern_style(hwnd);
+
         let _ = SetWindowPos(
             hwnd,
             None,
             200,
             200,
-            420,
-            120,
+            380,
+            56,
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
         create_controls(hwnd);
@@ -294,10 +284,10 @@ unsafe fn create_controls(hwnd: HWND) {
             | WS_VISIBLE
             | WS_TABSTOP
             | WINDOW_STYLE((ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN) as u32),
-        16,
-        16,
-        340,
-        60,
+        14,
+        12,
+        300,
+        32,
         Some(hwnd),
         Some(HMENU(ID_EDIT as isize as *mut _)),
         Some(hinst),
@@ -310,8 +300,8 @@ unsafe fn create_controls(hwnd: HWND) {
         w!("BUTTON"),
         w!("↑"),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
-        368,
-        60,
+        326,
+        10,
         36,
         36,
         Some(hwnd),
@@ -804,6 +794,80 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 /// 字符串 → nul 结尾 UTF-16。
+/// 应用 Win11 现代外观：大圆角 + 亚克力玻璃背景。
+unsafe fn apply_modern_style(hwnd: HWND) {
+    use windows::Win32::Graphics::Dwm::{
+        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMSBT_TRANSIENTWINDOW, DWMWCP_ROUND,
+    };
+    use windows::Win32::UI::Controls::MARGINS;
+    let round = DWMWCP_ROUND;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &round as *const _ as *const core::ffi::c_void,
+        4,
+    );
+    let backdrop = DWMSBT_TRANSIENTWINDOW; // 亚克力
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop as *const _ as *const core::ffi::c_void,
+        4,
+    );
+    // 让玻璃铺满客户区
+    let margins = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+    apply_acrylic(hwnd);
+}
+
+/// 通过 SetWindowCompositionAttribute 应用亚克力（毛玻璃）。
+unsafe fn apply_acrylic(hwnd: HWND) {
+    #[repr(C)]
+    struct AccentPolicy {
+        accent_state: i32,
+        accent_flags: i32,
+        gradient_color: u32,
+        animation_id: i32,
+    }
+    #[repr(C)]
+    struct WcaData {
+        attribute: i32,
+        data: *mut core::ffi::c_void,
+        size_of_data: usize,
+    }
+    type SetWca = unsafe extern "system" fn(HWND, *mut WcaData) -> i32;
+
+    let user32 = windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll"))
+        .unwrap_or_default();
+    let addr = windows::Win32::System::LibraryLoader::GetProcAddress(
+        user32,
+        windows::core::s!("SetWindowCompositionAttribute"),
+    );
+    let f: SetWca = match addr {
+        Some(a) => std::mem::transmute(a),
+        None => return,
+    };
+    // ACCENT_ENABLE_ACRYLICBLURBEHIND = 4；渐变色 AABBGGRR（深色半透明）
+    let mut policy = AccentPolicy {
+        accent_state: 4,
+        accent_flags: 2,
+        gradient_color: 0xCC1A1A1A,
+        animation_id: 0,
+    };
+    let mut data = WcaData {
+        attribute: 19, // WCA_ACCENT_POLICY
+        data: &mut policy as *mut _ as *mut core::ffi::c_void,
+        size_of_data: std::mem::size_of::<AccentPolicy>(),
+    };
+    let _ = f(hwnd, &mut data);
+}
+
 /// 自绘圆形发送键。
 unsafe fn draw_send_button(lparam: LPARAM) {
     use windows::Win32::Graphics::Gdi::{

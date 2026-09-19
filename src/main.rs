@@ -1,6 +1,7 @@
 // 隐藏控制台窗口（GUI 程序）；调试时可注释掉。
 #![windows_subsystem = "windows"]
 
+mod agent_launcher;
 mod app;
 mod autostart;
 mod behavior;
@@ -69,8 +70,16 @@ fn main() {
 
     config::reset_log_file();
 
+    // 一键启动：静默拉起 pet-agent（单实例保护由 agent 自身负责）
+    agent_launcher::launch_agent();
+
     let mut app = app::App::new();
-    if let Err(e) = app.run() {
+    let result = app.run();
+
+    // 退出联动：请求 agent 退出
+    agent_launcher::request_agent_exit();
+
+    if let Err(e) = result {
         config::log_error(&format!("fatal: {e}"));
         std::process::exit(1);
     }

@@ -1,4 +1,7 @@
-//! 构建脚本：链接 C++ Cubism shim 静态库，并部署运行时资源（shader）。
+//! 构建脚本：
+//! 1. 编译 C++ Cubism shim 静态库
+//! 2. 编译并链接 Windows 资源（图标）
+//! 3. 部署 shader / characters 到输出目录
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -6,6 +9,9 @@ use std::process::Command;
 fn main() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let shim_build = manifest.join("shim").join("build");
+
+    // 编译 Windows 资源（应用图标），链接进 exe
+    build_resource(&manifest);
 
     // 确保 C++ shim 已构建（Release）。若已存在则跳过，避免重复编译。
     let shim_lib = shim_build.join("Release").join("cubism_shim.lib");
@@ -70,6 +76,97 @@ fn main() {
     println!("cargo:rerun-if-changed=shim/shim.cpp");
     println!("cargo:rerun-if-changed=shim/CMakeLists.txt");
     println!("cargo:rerun-if-changed=characters");
+}
+
+/// 用 rc.exe 编译 assets/desktop-pet.rc 为 .res，并把 .res 链接进最终 exe。
+/// 需要 Windows SDK 的 rc.exe（已在 VS BuildTools 环境）。
+fn build_resource(manifest: &PathBuf) {
+    let rc = manifest.join("assets").join("desktop-pet.rc");
+    if !rc.is_file() {
+        println!("cargo:warning=assets/desktop-pet.rc not found, skipping icon resource");
+        return;
+    }
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let res = out_dir.join("desktop-pet.res");
+
+    // 查找 rc.exe（优先 PATH，其次 Windows SDK 最新版本）
+    let rc_exe = find_rc_exe();
+    let rc_exe = match rc_exe {
+        Some(p) => p,
+        None => {
+            println!("cargo:warning=rc.exe not found, skipping icon resource");
+            return;
+        }
+    };
+
+    // 资源文件在 assets/ 下，rc.exe 用相对路径查找 icon.ico，设置 cwd 为 assets
+    let status = Command::new(&rc_exe)
+        .arg("/nologo")
+        .arg("/fo")
+        .arg(&res)
+        .arg("desktop-pet.rc")
+        .current_dir(manifest.join("assets"))
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            println!("cargo:warning=rc.exe exited with {s}");
+            return;
+        }
+        Err(e) => {
+            println!("cargo:warning=failed to run rc.exe: {e}");
+            return;
+        }
+    }
+
+    // 链接 .res 到最终二进制
+    println!("cargo:rustc-link-arg=/NOLOGO");
+    println!("cargo:rustc-link-arg={}", res.display());
+    println!("cargo:rerun-if-changed=assets/desktop-pet.rc");
+    println!("cargo:rerun-if-changed=assets/icon.ico");
+    println!("cargo:rerun-if-changed=assets/icon_tray.ico");
+}
+
+/// 查找 rc.exe：优先 PATH，其次 Windows SDK bin/10.x/x64/rc.exe（选版本号最高的）。
+fn find_rc_exe() -> Option<PathBuf> {
+    // 1. PATH
+    if let Ok(out) = Command::new("where").arg("rc.exe").output() {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if let Some(first) = s.lines().next() {
+                let p = PathBuf::from(first.trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    // 2. Windows SDK 常见路径
+    let sdk_root = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
+    if sdk_root.is_dir() {
+        let mut versions: Vec<PathBuf> = std::fs::read_dir(&sdk_root)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        // 过滤掉 arm64/x64/x86 等架构目录名（只要版本号目录）
+        versions.retain(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("10."))
+                .unwrap_or(false)
+        });
+        // 按版本号字符串降序（对形如 10.0.26100.0 有效）
+        versions.sort();
+        for v in versions.iter().rev() {
+            let rc = v.join("x64").join("rc.exe");
+            if rc.is_file() {
+                return Some(rc);
+            }
+        }
+    }
+    None
 }
 
 fn deploy_characters(manifest: &PathBuf) {

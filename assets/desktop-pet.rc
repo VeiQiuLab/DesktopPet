@@ -1,0 +1,8 @@
+// DesktopPet Windows resources
+// Compiled into desktop-pet.exe by build.rs
+
+// 1 = 应用主图标（EXE / 任务栏 / 窗口）
+1 ICON "icon.ico"
+
+// 2 = 托盘图标（头部特写，小尺寸更清晰）
+2 ICON "icon_tray.ico"

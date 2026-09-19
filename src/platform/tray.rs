@@ -36,7 +36,8 @@ impl TrayIcon {
         nid.uID = TRAY_ICON_ID;
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = TRAY_CALLBACK_MSG;
-        nid.hIcon = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        // 托盘专用图标（头部特写，小尺寸更清晰）
+        nid.hIcon = crate::platform::assets::load_tray_icon();
         let tip: Vec<u16> = "Desktop Pet".encode_utf16().collect();
         for (i, c) in tip.iter().enumerate().take(127) {
             nid.szTip[i] = *c;

@@ -75,11 +75,14 @@ pub unsafe fn create_window(
     let instance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)?;
 
     let class_name = w!("DesktopPetWindow");
+    let icon = crate::platform::assets::load_app_icon();
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wndproc),
         hInstance: HINSTANCE(instance.0),
+        hIcon: icon,
+        hIconSm: icon,
         lpszClassName: class_name,
         ..Default::default()
     };
@@ -127,6 +130,13 @@ pub unsafe fn create_window(
         menu_open: false,
     });
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
+
+    // 显式设置窗口图标（部分场景下仅类图标可能不刷新任务栏/Alt+Tab）
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL};
+        let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(icon.0 as isize)));
+        let _ = SendMessageW(hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(icon.0 as isize)));
+    }
 
     let _ = ShowWindow(hwnd, SW_SHOW);
     let _ = UpdateWindow(hwnd);

@@ -164,6 +164,12 @@ pub fn run_ui(provider_override: Option<&str>) {
         }
 
         let _ = SetWindowPos(hwnd, None, 200, 200, 428, 52, SWP_NOZORDER | SWP_NOACTIVATE);
+        // 胶囊裁剪：圆角外不显示
+        {
+            use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+            let rgn = CreateRoundRectRgn(0, 0, 429, 53, 52, 52);
+            let _ = SetWindowRgn(hwnd, Some(rgn), true);
+        }
         // 圆角交由 DWM（DWMWCP_ROUND）处理，不用 SetWindowRgn（会裁掉毛玻璃）
         create_controls(hwnd);
         // 窗口定位后再捕获桌面背景（供玻璃折射）
@@ -236,6 +242,8 @@ pub fn run_ui(provider_override: Option<&str>) {
                 if msg.message == WM_QUIT {
                     break;
                 }
+                // 每帧跟随桌宠（正下方 + 居中 + 隐藏同步）
+                position_near_pet(hwnd);
                 // 整窗玻璃（内缩 1px 留边）
                 crate::liquid_glass::render_frame(428, 52, 1.0, 1.0, 426.0, 50.0);
                 // D3D Present 会覆盖子控件 → 每帧强制重绘 EDIT / 发送键
@@ -386,21 +394,7 @@ unsafe fn create_controls(hwnd: HWND) {
         None,
     );
 
-    // 状态控件（隐藏：仅内部用于反馈，不显示技术信息）
-    let _ = CreateWindowExW(
-        WINDOW_EX_STYLE(0),
-        w!("STATIC"),
-        w!(""),
-        WS_CHILD,
-        0,
-        0,
-        0,
-        0,
-        Some(hwnd),
-        Some(HMENU(ID_STATUS as isize as *mut _)),
-        Some(hinst),
-        None,
-    );
+    // 结构极简：只有一条输入栏 + 一个发送按钮，无其他控件
 }
 
 unsafe fn setup_hotkey(hwnd: HWND) {
@@ -473,31 +467,37 @@ unsafe fn toggle_send_button(hwnd: HWND, thinking: bool) {
 }
 
 unsafe fn position_near_pet(hwnd: HWND) {
-    // 尝试查询桌宠位置
-    let pet = ipc::query_status();
-    let (x, y) = match pet {
-        Some(s) if s.online => {
-            let [l, t, r, b] = s.window_rect;
-            let w = 480;
-            let h = 240;
-            // 优先桌宠上方
-            let mut x = l + (r - l) / 2 - w / 2;
-            let mut y = t - h - 8;
-            if y < 0 {
-                y = b + 8;
-            }
-            if x < 0 {
-                x = 8;
-            }
-            (x, y)
-        }
-        _ => {
-            // 无桌宠：鼠标所在显示器中央
-            let mut pt = windows::Win32::Foundation::POINT::default();
-            let _ = GetCursorPos(&mut pt);
-            (pt.x - 190, pt.y - 75)
-        }
-    };
+    // 桌宠窗口矩形（纯 Win32，不走 IPC）
+    const W: i32 = 428;
+    const H: i32 = 52;
+    const GAP: i32 = 10;
+    let pet = FindWindowW(w!("DesktopPetWindow"), None).unwrap_or_default();
+    if pet.0.is_null() {
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            pt.x - W / 2,
+            pt.y - H / 2,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+        return;
+    }
+    // 桌宠隐藏 → 输入条同步隐藏
+    if !IsWindowVisible(pet).as_bool() {
+        let _ = ShowWindow(hwnd, SW_HIDE);
+        return;
+    }
+    let mut r = windows::Win32::Foundation::RECT::default();
+    if GetWindowRect(pet, &mut r).is_err() {
+        return;
+    }
+    // 角色正下方 + 水平居中
+    let x = r.left + (r.right - r.left) / 2 - W / 2;
+    let y = r.bottom + GAP;
     let _ = SetWindowPos(
         hwnd,
         Some(HWND_TOPMOST),
@@ -971,13 +971,14 @@ unsafe fn draw_send_button(lparam: LPARAM) {
     let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
     let hdc = dis.hDC;
     let r = dis.rcItem;
-    let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00F0_7030));
+    // 中性浅灰（克制，不抢戏）
+    let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00E8_E8E8));
     let old = SelectObject(hdc, HGDIOBJ(brush.0));
     let _ = Ellipse(hdc, r.left, r.top, r.right, r.bottom);
     let _ = SelectObject(hdc, old);
     let _ = DeleteObject(HGDIOBJ(brush.0));
     let _ = SetBkMode(hdc, TRANSPARENT);
-    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x00FFFFFF));
+    let _ = SetTextColor(hdc, windows::Win32::Foundation::COLORREF(0x0030_3030));
     // 用三角形字符代替自绘线（避免 GDI 异常）
     let mut t: Vec<u16> = "➤".encode_utf16().collect();
     let mut rc = r;

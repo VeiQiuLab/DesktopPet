@@ -117,4 +117,3 @@ pub fn resize(w: i32, h: i32) {
 pub fn ok() -> bool {
     unsafe { lg_ok() != 0 }
 }
-

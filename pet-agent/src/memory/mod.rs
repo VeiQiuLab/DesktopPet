@@ -311,6 +311,25 @@ impl MemoryManager {
         Ok(())
     }
 
+    /// 列出已删除（soft delete）。
+    pub fn list_deleted(&self) -> Vec<Memory> {
+        self.query(
+            "SELECT id,kind,content,created_at,updated_at,source,status,pinned FROM memories WHERE status='deleted' ORDER BY updated_at DESC",
+        )
+    }
+
+    /// 恢复已删除记忆。
+    pub fn restore(&self, id: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE memories SET status='active', updated_at=?1 WHERE id=?2",
+                rusqlite::params![Self::now(), id],
+            )
+            .map_err(|e| format!("restore failed: {e}"))?;
+        self.audit("restore", Some(id), None, None, "user");
+        Ok(())
+    }
+
     /// 检索：pinned 优先 + keyword 匹配 + recency；受 max 限制。
     pub fn retrieve(&self, query: &str, max: usize, max_chars: usize) -> Vec<Memory> {
         let all = self.list_active();
@@ -378,8 +397,19 @@ impl MemoryManager {
             #[allow(dead_code)]
             source: String,
         }
-        let rows: Vec<Row> =
-            serde_json::from_str(json).map_err(|e| format!("invalid json schema: {e}"))?;
+        // 兼容两种：纯数组 / { export_version, memories: [...] }
+        let rows: Vec<Row> = if let Ok(doc) = serde_json::from_str::<serde_json::Value>(json) {
+            if let Some(arr) = doc.get("memories") {
+                serde_json::from_value(arr.clone())
+                    .map_err(|e| format!("invalid memories array: {e}"))?
+            } else if doc.is_array() {
+                serde_json::from_value(doc).map_err(|e| format!("invalid json schema: {e}"))?
+            } else {
+                return Err("unsupported import format".into());
+            }
+        } else {
+            return Err("invalid json".into());
+        };
         let mut n = 0;
         for r in rows {
             if r.content.trim().is_empty() {
@@ -396,12 +426,16 @@ impl MemoryManager {
         Ok(n)
     }
 
-    /// 导出全部（active + deleted）为 JSON。
+    /// 导出全部（active + deleted）为 JSON，带 export_version。
     pub fn export_json(&self) -> String {
         let all = self.query(
             "SELECT id,kind,content,created_at,updated_at,source,status,pinned FROM memories ORDER BY id",
         );
-        serde_json::to_string_pretty(&all).unwrap_or_else(|_| "[]".into())
+        let doc = serde_json::json!({
+            "export_version": 1,
+            "memories": all,
+        });
+        serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".into())
     }
 
     /// 备份数据库文件。

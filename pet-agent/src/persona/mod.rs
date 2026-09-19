@@ -55,6 +55,69 @@ impl Default for Persona {
     }
 }
 
+/// 扫描到的 persona 摘要。
+#[derive(Debug, Clone)]
+pub struct PersonaInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// personas 根目录（exe 同目录优先，其次项目根）。
+fn personas_root() -> std::path::PathBuf {
+    let mut p = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    p.pop();
+    let exe_personas = p.join("personas");
+    if exe_personas.is_dir() {
+        return exe_personas;
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("personas")
+}
+
+/// 扫描并校验全部 persona（坏包跳过 + warning）。
+pub fn scan() -> Vec<PersonaInfo> {
+    let root = personas_root();
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.flatten() {
+            let dir = e.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let id = dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            match validate(&dir) {
+                Ok(p) => out.push(PersonaInfo { id, name: p.name }),
+                Err(w) => crate::log_line(&format!("persona '{id}' skipped: {w}")),
+            }
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+/// 校验 persona 目录。
+fn validate(dir: &std::path::Path) -> Result<Persona, String> {
+    let path = dir.join("persona.json");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("read failed: {e}"))?;
+    let p: Persona = serde_json::from_str(&text).map_err(|e| format!("parse failed: {e}"))?;
+    if p.id.trim().is_empty() {
+        return Err("id empty".into());
+    }
+    if p.name.trim().is_empty() {
+        return Err("name empty".into());
+    }
+    if p.system_prompt.trim().is_empty() {
+        return Err("system_prompt empty".into());
+    }
+    if !(1..=20).contains(&p.style.max_sentences) {
+        return Err("style.max_sentences out of range".into());
+    }
+    Ok(p)
+}
+
 impl Persona {
     /// 从 personas/<id>/persona.json 加载；缺失则回退内置默认并写出模板。
     pub fn load(id: &str) -> Self {
@@ -88,9 +151,14 @@ impl Persona {
         }
     }
 
-    /// 当前激活的 persona id（可由配置指定；此处固定 default）。
-    pub fn active_id() -> String {
-        "default".into()
+    /// 加载指定 id，找不到回退 default（+ warning）。
+    pub fn load_or_default(id: &str) -> Self {
+        let p = Self::load(id);
+        if p.id != id && !id.is_empty() {
+            crate::log_line(&format!("persona '{id}' not found, using default"));
+            return Self::load("default");
+        }
+        p
     }
 }
 

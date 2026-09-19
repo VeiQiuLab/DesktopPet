@@ -920,6 +920,48 @@ CLI：`memory list/pending/accept/reject/delete/export/backup/audit`。UI/Tray �
 - DB 失败 → 无记忆模式降级，不影响聊天与 DesktopPet。
 - Memory 只存本地；云端 Provider 时注入的 memories 会随 prompt 发出（已在 MEMORY.md 说明）。
 
+## 22. Memory Manager UI + Persona 切换（第十三阶段）
+
+### 22.1 Memory Manager 原生窗口
+
+- pet-agent 内 Win32 窗口（`memory_ui.rs`）；Tray →「记忆管理 (N 待确认)」。
+- 视图：已保存 / 待确认 / 已删除 / 变更记录（只读）。
+- 操作：编辑(user_ui)、删除(soft+确认)、Pin/Unpin、恢复(restore)、接受/拒绝、导出、备份。
+- 搜索（content 子串）+ kind 过滤（all/fact/preference/project/relationship/custom）。
+- 关闭=隐藏，复用同一窗口，不退出 agent。
+
+### 22.2 Restore / Audit
+
+- soft delete 后可 `restore`（写 audit: restore）。
+- Audit 视图只读展示 time/action/id/before/after/source。
+
+### 22.3 Import / Export
+
+- export 带 `export_version`；import 校验 schema → 生成 pending（不直接 active）。
+- UI 提供导出/备份按钮；import 走 CLI（UI 文件选择器为后续）。
+
+### 22.4 Persona Manager
+
+- Tray `Persona` 子菜单（列出 personas/，当前带勾选，切换）。
+- `persona::scan()` 校验（id/name/system_prompt 非空、style 范围），坏包跳过。
+- CLI：`personas` / `persona <id>`。
+- 配置 `active_persona`（缺失/不存在 fallback default + warning）。
+- 切换：清空短期对话，不动 Memory/Character/TTS。
+
+### 22.5 边界
+
+Persona（谁）/ Memory（知道什么）/ Conversation（刚才聊了什么）/ Character（长什么样）严格独立；
+Memory 跨 Persona 共用。
+
+### 22.6 已知技术债（第十三阶段）
+
+- UI 的 import 文件选择器未做（走 CLI）。
+- Prompt Preview / retrieve 诊断仅 CLI（`memory retrieve <q>`）。
+- Memory Manager 窗口操作同步执行（本地 SQLite 很快，未见卡顿）。
+- 编辑仅单行 EDIT（长文本体验一般）。
+
+---
+
 ### 21.8 已知技术债（第十二阶段）
 
 - 冲突检测为简单关键词启发式，非语义。

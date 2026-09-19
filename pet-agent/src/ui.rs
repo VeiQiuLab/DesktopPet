@@ -35,7 +35,8 @@ const CMD_OPEN: usize = 1;
 const CMD_CLEAR: usize = 2;
 const CMD_AUTOSTART: usize = 3;
 const CMD_EXIT: usize = 4;
-const CMD_MEMORY_PENDING: usize = 5;
+const CMD_MEMORY_MGMT: usize = 6;
+const CMD_PERSONA_BASE: usize = 50;
 
 thread_local! {
     static CTX: RefCell<Option<UiContext>> = RefCell::new(None);
@@ -148,7 +149,7 @@ pub fn run_ui(provider_override: Option<&str>) {
                 conv: crate::context::Conversation::new(&cfg),
                 pending_user: None,
                 tts: crate::tts::TtsController::new(&cfg),
-                persona: crate::persona::Persona::load(&crate::persona::Persona::active_id()),
+                persona: crate::persona::Persona::load_or_default(&cfg.active_persona),
                 memory: open_memory(),
                 toast: None,
             });
@@ -194,6 +195,22 @@ fn open_memory() -> Option<crate::memory::MemoryManager> {
             None
         }
     }
+}
+
+/// 切换 Persona：更新配置 + 清空短期对话（不动 Memory/Character/TTS）。
+fn switch_persona(id: &str) {
+    let mut cfg = AgentConfig::load();
+    cfg.active_persona = id.to_string();
+    cfg.save();
+    CTX.with(|c| {
+        if let Some(ctx) = c.borrow_mut().as_mut() {
+            ctx.persona = crate::persona::Persona::load_or_default(id);
+            ctx.conv.clear();
+        }
+    });
+    log_line(&format!(
+        "persona switched to '{id}' (conversation cleared, memory kept)"
+    ));
 }
 
 fn provider_status_label() -> String {
@@ -646,6 +663,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     match cmd {
                         CMD_OPEN => focus_input(hwnd),
                         CMD_CLEAR => clear_conversation(hwnd),
+                        CMD_MEMORY_MGMT => {
+                            if let Some(m) = open_memory() {
+                                crate::memory_ui::show(m);
+                            }
+                        }
+                        c if c >= CMD_PERSONA_BASE => {
+                            let personas = crate::persona::scan();
+                            if let Some(p) = personas.get(c - CMD_PERSONA_BASE) {
+                                switch_persona(&p.id);
+                                set_status(hwnd, &format!("Persona -> {}", p.name));
+                            }
+                        }
                         CMD_AUTOSTART => {
                             let now = autostart::toggle();
                             log_line(&format!("agent autostart toggled: {now}"));
@@ -701,18 +730,21 @@ unsafe fn show_tray_menu(hwnd: HWND) -> usize {
         (pn, ctx.persona.name.clone(), ctx.memory.is_some())
     });
     if mem_ok {
-        let label = wide_str(&format!("待确认记忆 ({pending_n})"));
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING | MF_GRAYED,
-            CMD_MEMORY_PENDING,
-            PCWSTR(label.as_ptr()),
-        );
+        let label = wide_str(&format!("记忆管理 ({pending_n} 待确认)"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_MEMORY_MGMT, PCWSTR(label.as_ptr()));
     } else {
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, w!("记忆不可用"));
     }
-    let plabel = wide_str(&format!("Persona: {persona_name}"));
-    let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(plabel.as_ptr()));
+    let psub = CreatePopupMenu().unwrap_or_default();
+    for (i, p) in crate::persona::scan().iter().enumerate() {
+        let mut flags = MF_STRING;
+        if p.name == persona_name {
+            flags |= MF_CHECKED;
+        }
+        let label = wide_str(&format!("{} ({})", p.name, p.id));
+        let _ = AppendMenuW(psub, flags, CMD_PERSONA_BASE + i, PCWSTR(label.as_ptr()));
+    }
+    let _ = AppendMenuW(menu, MF_POPUP, psub.0 as usize, w!("Persona"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, w!(""));
     let as_flags = if autostart::is_enabled() {
         MF_STRING | MF_CHECKED

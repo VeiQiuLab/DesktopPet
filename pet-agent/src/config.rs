@@ -37,6 +37,13 @@ pub struct AgentConfig {
     /// Lip sync 配置。
     #[serde(default)]
     pub lip_sync: LipSyncConfig,
+    /// 当前激活的 persona id。
+    #[serde(default = "default_persona")]
+    pub active_persona: String,
+}
+
+fn default_persona() -> String {
+    "default".into()
 }
 
 /// Lip sync 配置。
@@ -193,6 +200,17 @@ impl Default for AgentConfig {
             log_conversation: false,
             tts: TtsConfig::default(),
             lip_sync: LipSyncConfig::default(),
+            active_persona: default_persona(),
+        }
+    }
+}
+
+impl AgentConfig {
+    /// 持久化到配置文件（用于 persona 切换）。
+    pub fn save(&self) {
+        let path = config_path();
+        if let Ok(text) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(&path, text);
         }
     }
 }

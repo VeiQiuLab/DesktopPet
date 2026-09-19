@@ -77,7 +77,10 @@ pet-agent.exe ui      # 常驻：原生输入框 + 托盘 + 全局快捷键
 - Memory V1：SQLite `data/memory.db`；显式「记住：X」写 active，隐式推测进 pending，冲突进 pending update。
 - PromptBuilder：Persona → Memory（背景数据）→ 历史 → 当前 user。
 - CLI：`pet-agent memory list|pending|accept|reject|delete|export|backup|audit`。
-- 详见 `MEMORY.md`。
+- Memory Manager UI：Tray「记忆管理」→ 原生窗口（active/pending/deleted/audit + 编辑/删除/pin/恢复/接受/拒绝/导出/备份）。
+- Persona：Tray「Persona」子菜单切换；配置 `active_persona`；切换清空短期对话，不动 Memory/Character/TTS。
+- CLI：`personas` / `persona <id>` / `memory restore|pin|unpin|deleted|retrieve`。
+- 详见 `MEMORY.md`、`PERSONA.md`。
 
 ## 边界
 

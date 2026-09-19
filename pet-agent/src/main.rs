@@ -11,6 +11,8 @@ mod context;
 mod ipc;
 mod mapper;
 mod memory;
+#[cfg(windows)]
+mod memory_ui;
 mod persona;
 mod prompt;
 mod provider;
@@ -63,6 +65,12 @@ fn main() {
         "envelope-test" => run_envelope_test(),
         "piper-check" => run_piper_check(),
         "memory" => run_memory_cli(&args),
+        "personas" => {
+            for p in persona::scan() {
+                println!("{} ({})", p.id, p.name);
+            }
+        }
+        "persona" => run_persona_cli(&args),
         "tts-test" => {
             let text = args
                 .get(2)
@@ -91,8 +99,9 @@ fn print_help() {
     println!("  pet-agent provider-test         # 用配置的 Provider 发一次极短请求");
     println!("  pet-agent piper-check           # 检查 Piper exe/model 配置");
     println!(
-        "  pet-agent memory list|pending|accept <id>|reject <id>|delete <id>|export|backup|audit"
+        "  pet-agent memory list|pending|accept <id>|reject <id>|delete <id>|restore <id>|pin <id>|unpin <id>|deleted|retrieve <q>|export|import <file>|backup|audit"
     );
+    println!("  pet-agent personas | persona <id>");
     println!("  pet-agent tts-test \"文本\"      # 用当前 TTS 配置合成并播放（不发往 AI）");
 }
 
@@ -132,6 +141,24 @@ fn run_chat(provider_override: Option<&str>) {
         handle_turn(&*provider, &cfg, &mut ctx, text);
     }
     log_line("pet-agent exited");
+}
+
+/// Persona 切换（写配置）。
+fn run_persona_cli(args: &[String]) {
+    let id = args.get(2).cloned().unwrap_or_default();
+    let mut cfg = AgentConfig::load();
+    if id.is_empty() {
+        println!("active persona: {}", cfg.active_persona);
+        return;
+    }
+    let exists = persona::scan().iter().any(|p| p.id == id);
+    if !exists {
+        println!("persona '{id}' not found (not switching)");
+        return;
+    }
+    cfg.active_persona = id.clone();
+    cfg.save();
+    println!("active persona -> {id}");
 }
 
 /// Memory DB 路径。
@@ -221,6 +248,40 @@ fn run_memory_cli(args: &[String]) {
                     },
                     Err(e) => println!("read failed: {e}"),
                 }
+            }
+        }
+        "restore" => {
+            if let Some(id) = args.get(3).and_then(|s| s.parse::<i64>().ok()) {
+                match mgr.restore(id) {
+                    Ok(_) => println!("restored #{id}"),
+                    Err(e) => println!("error: {e}"),
+                }
+            }
+        }
+        "deleted" => {
+            for m in mgr.list_deleted() {
+                println!("#{} [{}] {}", m.id, m.kind, m.content);
+            }
+        }
+        "pin" | "unpin" => {
+            if let Some(id) = args.get(3).and_then(|s| s.parse::<i64>().ok()) {
+                let p = sub == "pin";
+                match mgr.set_pinned(id, p) {
+                    Ok(_) => println!("{} #{id}", if p { "pinned" } else { "unpinned" }),
+                    Err(e) => println!("error: {e}"),
+                }
+            }
+        }
+        "retrieve" => {
+            let q = args.get(3).cloned().unwrap_or_default();
+            for m in mgr.retrieve(&q, 12, 1200) {
+                println!(
+                    "#{} [{}]{} {}",
+                    m.id,
+                    m.kind,
+                    if m.pinned { " (pinned)" } else { "" },
+                    m.content
+                );
             }
         }
         "backup" => match mgr.backup(&db) {

@@ -842,7 +842,6 @@ unsafe fn apply_modern_style(hwnd: HWND) {
         4,
     );
     // 不设置 SYSTEMBACKDROP_TYPE（会覆盖自绘深色背景）
-    let _ = DWMSBT_TRANSIENTWINDOW;
     // 不扩展 DWM 框架（避免与自绘背景冲突）
     let _ = std::mem::size_of::<MARGINS>();
     // 注：暂不启用亚克力，避免 EDIT 子控件与半透明玻璃产生「两层颜色」。
